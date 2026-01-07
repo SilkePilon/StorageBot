@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  bots      Bot[]
+}
+
+model Bot {
+  id              String   @id @default(uuid())
+  name            String
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Server connection
+  serverHost      String?
+  serverPort      Int      @default(25565)
+  serverVersion   String?  // null = auto-detect
+
+  // Microsoft auth (email for mineflayer cache)
+  microsoftEmail  String?
+  isAuthenticated Boolean  @default(false)
+  
+  // Offline mode for LAN testing
+  useOfflineAccount Boolean @default(false)
+  offlineUsername   String?
+
+  // Public visibility - allows other users to view storage contents
+  isPublic        Boolean  @default(false)
+
+  // Status
+  isOnline        Boolean  @default(false)
+  lastSeen        DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  storageSystems  StorageSystem[]
+
+  @@index([userId])
+  @@index([isPublic])
+}
+
+model StorageSystem {
+  id        String   @id @default(uuid())
+  name      String
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  // Center coordinates
+  centerX   Int
+  centerY   Int
+  centerZ   Int
+  radius    Int      @default(32)
+
+  // Indexing status
+  isIndexed     Boolean  @default(false)
+  lastIndexed   DateTime?
+  indexProgress Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chests    Chest[]
+
+  @@index([botId])
+}
+
+model Chest {
+  id              String        @id @default(uuid())
+  storageSystemId String
+  storageSystem   StorageSystem @relation(fields: [storageSystemId], references: [id], onDelete: Cascade)
+
+  // Position
+  x               Int
+  y               Int
+  z               Int
+
+  // Type
+  isDoubleChest   Boolean  @default(false)
+  chestType       String   @default("chest")
+
+  lastOpened      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           ChestItem[]
+
+  @@unique([storageSystemId, x, y, z])
+  @@index([storageSystemId])
+}
+
+model ChestItem {
+  id        String   @id @default(uuid())
+  chestId   String
+  chest     Chest    @relation(fields: [chestId], references: [id], onDelete: Cascade)
+
+  slot      Int
+  itemId    String
+  itemName  String
+  count     Int
+  nbt       Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([chestId, slot])
+  @@index([chestId])
+  @@index([itemId])
+  @@index([itemName])
+}
