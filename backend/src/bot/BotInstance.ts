@@ -1166,17 +1166,6 @@ export class BotInstance extends EventEmitter {
           } else {
             console.log(`[Task ${task.id}] Failed to find placed shulker at ${placePos.x}, ${placePos.y}, ${placePos.z}`);
           }
-
-          // Re-open chest to continue with other operations
-          // Actually we need to close it first
-          chestAgain.close();
-          await this.sleep(200);
-
-          // Reopen for any remaining operations
-          const chestReopened = await this.bot!.openContainer(block);
-          await this.sleep(100);
-          // We're done with shulker extractions from this chest, close it
-          chestReopened.close();
         }
 
         await this.sleep(200);
@@ -1301,8 +1290,6 @@ export class BotInstance extends EventEmitter {
             console.error(`Failed to deposit ${item.name}:`, error);
           }
         }
-      }
-    }
       }
     }
 
