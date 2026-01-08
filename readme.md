@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 ![Status](https://img.shields.io/badge/Status-Early%20Development-orange)
 
-**A Minecraft storage management bot with a modern web interface inspired by (Gringotts)[https://2b2t.miraheze.org/wiki/User:Bezo/Drafts/Gringotts]**
+**A Minecraft storage management bot with a modern web interface inspired by [Gringotts](https://2b2t.miraheze.org/wiki/User:Bezo/Drafts/Gringotts)**
 
 _Automatically index, search, and retrieve items from your storage systems_
 
