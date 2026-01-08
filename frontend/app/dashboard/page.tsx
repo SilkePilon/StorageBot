@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { useDebounce } from "use-debounce";
 import { useBots, useConnectBot, useDisconnectBot, useDeleteBot, useSetBotVisibility, usePublicBots } from "@/hooks/use-bots";
 import { useStorageSystems, useStorageItems, useStartIndexing, useStorageStats } from "@/hooks/use-storage";
 import { useBotStore } from "@/stores/bot-store";
@@ -12,6 +13,9 @@ import { NewBotDialog } from "@/components/new-bot-dialog";
 import { SetupBotDialog } from "@/components/setup-bot-dialog";
 import { ItemIcon } from "@/components/item-icon";
 import { StorageStats, StorageStatsSkeleton } from "@/components/storage-stats";
+import { CreateTaskDialog } from "@/components/create-task-dialog";
+import { TaskList } from "@/components/task-list";
+import { ShulkerToggleButton } from "@/components/shulker-toggle-button";
 import { toast } from "sonner";
 import {
   Bot,
@@ -36,6 +40,12 @@ import {
   Globe,
   Lock,
   Users,
+  Package,
+  ShoppingCart,
+  X,
+  Minus,
+  Check,
+  ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -79,14 +89,65 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+
+// Helper to get shulker box color from item name
+function getShulkerColor(itemId: string): { bg: string; border: string } {
+  const colorMap: Record<string, { bg: string; border: string }> = {
+    white_shulker_box: { bg: "bg-gray-100 dark:bg-gray-200", border: "border-gray-300" },
+    orange_shulker_box: { bg: "bg-orange-200 dark:bg-orange-300", border: "border-orange-400" },
+    magenta_shulker_box: { bg: "bg-fuchsia-200 dark:bg-fuchsia-300", border: "border-fuchsia-400" },
+    light_blue_shulker_box: { bg: "bg-sky-200 dark:bg-sky-300", border: "border-sky-400" },
+    yellow_shulker_box: { bg: "bg-yellow-200 dark:bg-yellow-300", border: "border-yellow-400" },
+    lime_shulker_box: { bg: "bg-lime-200 dark:bg-lime-300", border: "border-lime-400" },
+    pink_shulker_box: { bg: "bg-pink-200 dark:bg-pink-300", border: "border-pink-400" },
+    gray_shulker_box: { bg: "bg-gray-400 dark:bg-gray-500", border: "border-gray-500" },
+    light_gray_shulker_box: { bg: "bg-gray-300 dark:bg-gray-400", border: "border-gray-400" },
+    cyan_shulker_box: { bg: "bg-cyan-200 dark:bg-cyan-300", border: "border-cyan-400" },
+    purple_shulker_box: { bg: "bg-purple-300 dark:bg-purple-400", border: "border-purple-500" },
+    blue_shulker_box: { bg: "bg-blue-300 dark:bg-blue-400", border: "border-blue-500" },
+    brown_shulker_box: { bg: "bg-amber-300 dark:bg-amber-400", border: "border-amber-500" },
+    green_shulker_box: { bg: "bg-green-300 dark:bg-green-400", border: "border-green-500" },
+    red_shulker_box: { bg: "bg-red-300 dark:bg-red-400", border: "border-red-500" },
+    black_shulker_box: { bg: "bg-gray-700 dark:bg-gray-800", border: "border-gray-800" },
+    shulker_box: { bg: "bg-purple-200 dark:bg-purple-300", border: "border-purple-400" }, // Default purple
+  };
+  return colorMap[itemId] || colorMap.shulker_box;
+}
 
 function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch] = useDebounce(searchQuery, 300);
   const [selectedStorageId, setSelectedStorageId] = useState<string | null>(null);
   const [indexingProgress, setIndexingProgress] = useState<number | null>(null);
   const [indexingStatus, setIndexingStatus] = useState<string>("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [expandedShulkerIds, setExpandedShulkerIds] = useState<Set<string>>(new Set());
+  const [allShulkersExpanded, setAllShulkersExpanded] = useState(false);
+  // Selection key format: "itemId" for regular items, "shulker:shulkerContentId" for shulker contents
+  const [selectedItems, setSelectedItems] = useState<Map<string, { 
+    itemId: string; 
+    itemName: string; 
+    count: number; 
+    maxCount: number;
+    // For items inside shulkers
+    fromShulker?: boolean;
+    shulkerContentId?: string;
+    shulkerChestItemId?: string;
+    shulkerSlotInChest?: number;
+    slotInShulker?: number;
+    chestX?: number;
+    chestY?: number;
+    chestZ?: number;
+  }>>(new Map());
+  const [createTaskDialogOpen, setCreateTaskDialogOpen] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   
   const { socket, subscribeTo } = useSocket();
   const botStatuses = useBotStore((state) => state.botStatuses);
@@ -104,9 +165,10 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   };
   
   const { data: storageSystems, refetch: refetchStorageSystems } = useStorageSystems(bot.id);
-  const { data: itemsData, isLoading: itemsLoading, refetch: refetchItems } = useStorageItems(
+  const { data: itemsData, isLoading: itemsLoading, isFetching: itemsFetching, refetch: refetchItems } = useStorageItems(
     selectedStorageId || "",
-    searchQuery
+    debouncedSearch,
+    bot.id
   );
   const { data: storageStats, isLoading: statsLoading } = useStorageStats(selectedStorageId || "", bot.id);
   const startIndex = useStartIndexing();
@@ -117,24 +179,28 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   const isIndexing = indexingProgress !== null && indexingProgress < 100;
 
   useEffect(() => {
-    if (isOpen && bot.id) {
-      subscribeTo(bot.id);
-    }
-  }, [isOpen, bot.id, subscribeTo]);
+    // Always subscribe to the bot for real-time updates
+    subscribeTo(bot.id);
+  }, [bot.id, subscribeTo]);
 
   // Listen for indexing progress and completion
   useEffect(() => {
-    if (!socket || !isOpen) return;
+    if (!socket) return;
 
     const handleIndexProgress = (data: any) => {
-      if (data.storageId === selectedStorageId) {
+      // Accept events for any storage from this bot
+      if (data.botId === bot.id) {
         setIndexingProgress(data.progress);
         setIndexingStatus(data.status || `${data.progress}%`);
+        // Update selectedStorageId if not set
+        if (!selectedStorageId && data.storageId) {
+          setSelectedStorageId(data.storageId);
+        }
       }
     };
 
     const handleIndexComplete = (data: any) => {
-      if (data.storageId === selectedStorageId) {
+      if (data.botId === bot.id) {
         setIndexingProgress(100);
         setIndexingStatus("Complete!");
         setTimeout(() => {
@@ -146,9 +212,11 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
       }
     };
 
-    const handleChestIndexed = () => {
-      // Optionally refresh during indexing for live updates
-      refetchItems();
+    const handleChestIndexed = (data: any) => {
+      // Refresh items during indexing for live updates
+      if (data.botId === bot.id) {
+        refetchItems();
+      }
     };
 
     socket.on("storage:indexProgress", handleIndexProgress);
@@ -160,7 +228,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
       socket.off("storage:indexComplete", handleIndexComplete);
       socket.off("storage:chestIndexed", handleChestIndexed);
     };
-  }, [socket, isOpen, selectedStorageId, refetchItems, refetchStorageSystems]);
+  }, [socket, bot.id, selectedStorageId, refetchItems, refetchStorageSystems]);
 
   useEffect(() => {
     if (storageSystems && storageSystems.length > 0 && !selectedStorageId) {
@@ -222,6 +290,132 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
       onError: (error) => toast.error(error.message),
     });
   };
+
+  // Item selection helpers
+  const toggleItemSelection = (itemId: string, itemName: string, totalCount: number) => {
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.set(itemId, { itemId, itemName, count: Math.min(64, totalCount), maxCount: totalCount });
+      }
+      return next;
+    });
+  };
+
+  // Toggle selection for items inside shulker boxes (aggregated - multiple sources)
+  const toggleAggregatedShulkerContent = (aggregatedItem: { itemId: string; itemName: string; count: number; sources: any[] }) => {
+    // Use shulkerId + itemId as the key for aggregated shulker content
+    const key = `shulker-agg:${aggregatedItem.sources[0]?.shulkerChestItemId}:${aggregatedItem.itemId}`;
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        // Add all sources to selection
+        const allSources = aggregatedItem.sources.map(s => ({
+          fromShulker: true,
+          shulkerContentId: s.id,
+          shulkerChestItemId: s.shulkerChestItemId,
+          shulkerSlotInChest: s.shulkerSlotInChest,
+          slotInShulker: s.slot,
+          chestX: s.chestX,
+          chestY: s.chestY,
+          chestZ: s.chestZ,
+          count: s.count,
+        }));
+        
+        next.set(key, { 
+          itemId: aggregatedItem.itemId, 
+          itemName: aggregatedItem.itemName, 
+          count: Math.min(64, aggregatedItem.count), 
+          maxCount: aggregatedItem.count,
+          fromShulker: true,
+          // Store the first source for backwards compatibility
+          shulkerContentId: aggregatedItem.sources[0]?.id,
+          shulkerChestItemId: aggregatedItem.sources[0]?.shulkerChestItemId,
+          shulkerSlotInChest: aggregatedItem.sources[0]?.shulkerSlotInChest,
+          slotInShulker: aggregatedItem.sources[0]?.slot,
+          chestX: aggregatedItem.sources[0]?.chestX,
+          chestY: aggregatedItem.sources[0]?.chestY,
+          chestZ: aggregatedItem.sources[0]?.chestZ,
+        });
+      }
+      return next;
+    });
+  };
+
+  const updateItemCount = (key: string, count: number) => {
+    setSelectedItems((prev) => {
+      const next = new Map(prev);
+      const item = next.get(key);
+      if (item) {
+        next.set(key, { ...item, count: Math.max(1, Math.min(item.maxCount, count)) });
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedItems(new Map());
+  };
+
+  // Get all shulker IDs from the items data
+  const allShulkerIds = useMemo(() => {
+    if (!itemsData?.items) return [];
+    return itemsData.items
+      .filter((item: any) => item.isShulkerBox && item.hasContents && item.shulkerId)
+      .map((item: any) => item.shulkerId);
+  }, [itemsData?.items]);
+
+  // Toggle all shulkers open/closed with staggered animation
+  const toggleAllShulkers = () => {
+    if (allShulkersExpanded) {
+      // Collapse all - staggered
+      const ids = Array.from(expandedShulkerIds);
+      ids.forEach((id, index) => {
+        setTimeout(() => {
+          setExpandedShulkerIds(prev => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }, index * 50);
+      });
+      setAllShulkersExpanded(false);
+    } else {
+      // Expand all - staggered
+      allShulkerIds.forEach((id: string, index: number) => {
+        setTimeout(() => {
+          setExpandedShulkerIds(prev => {
+            const next = new Set(prev);
+            next.add(id);
+            return next;
+          });
+        }, index * 50);
+      });
+      setAllShulkersExpanded(true);
+    }
+  };
+
+  const selectedItemsArray = Array.from(selectedItems.values()).map((item) => ({
+    itemId: item.itemId,
+    itemName: item.itemName,
+    requestedCount: item.count,
+    maxCount: item.maxCount,
+    // Include shulker source info if present
+    fromShulker: item.fromShulker,
+    shulkerContentId: item.shulkerContentId,
+    shulkerChestItemId: item.shulkerChestItemId,
+    shulkerSlotInChest: item.shulkerSlotInChest,
+    slotInShulker: item.slotInShulker,
+    chestX: item.chestX,
+    chestY: item.chestY,
+    chestZ: item.chestZ,
+  }));
+
+  const serverVersion = status?.serverVersion || bot.serverVersion || "1.21.4";
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -465,46 +659,62 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                 {/* Search & Controls */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="relative flex-1 min-w-[150px] max-w-xs">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    {itemsFetching && searchQuery ? (
+                      <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground animate-spin" />
+                    ) : (
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    )}
                     <Input
-                      placeholder="Search items..."
+                      placeholder="Search items & shulkers..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-8 h-8 text-sm"
+                      className="pl-8 pr-8 h-8 text-sm"
                     />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <span className="text-xs">✕</span>
+                      </button>
+                    )}
                   </div>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    className="h-8 w-8 p-0"
+                    className="h-8 text-xs"
                     onClick={() => refetchItems()}
                   >
-                    <RefreshCw className="h-3.5 w-3.5" />
+                    <RefreshCw className="mr-1 h-3 w-3" />
+                    Refresh
                   </Button>
                   {isOwner && isOnline && selectedStorageId && (
-                    isIndexing ? (
-                      <div className="flex items-center gap-2 min-w-[120px]">
-                        <Progress value={indexingProgress || 0} className="h-2 flex-1" />
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {indexingStatus || `${indexingProgress}%`}
-                        </span>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-xs"
-                        onClick={handleStartIndex}
-                        disabled={startIndex.isPending}
-                      >
-                        {startIndex.isPending ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={handleStartIndex}
+                      disabled={startIndex.isPending || isIndexing}
+                    >
+                      {startIndex.isPending || isIndexing ? (
+                        <>
                           <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                        ) : (
+                          Indexing...
+                        </>
+                      ) : (
+                        <>
                           <RefreshCw className="mr-1 h-3 w-3" />
-                        )}
-                        Re-index
-                      </Button>
-                    )
+                          Re-index
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  {allShulkerIds.length > 0 && (
+                    <ShulkerToggleButton
+                      isOpen={allShulkersExpanded}
+                      onToggle={toggleAllShulkers}
+                      disabled={allShulkerIds.length === 0}
+                    />
                   )}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground ml-auto">
                     <span>{itemsData?.pagination?.total || 0} items</span>
@@ -539,41 +749,235 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                   ) : (
                     <ScrollArea className="h-[400px]">
                       <div className="flex flex-wrap gap-2 p-3">
-                        {itemsData?.items?.map((item: any) => (
-                          <Tooltip key={item.itemId}>
-                            <TooltipTrigger asChild>
-                              <div className="w-12 h-12 rounded-md bg-muted/30 hover:bg-muted/60 hover:ring-2 hover:ring-primary/50 hover:z-10 transition-colors cursor-pointer flex items-center justify-center relative">
-                                <ItemIcon
-                                  itemId={item.itemId}
-                                  itemName={item.itemName}
-                                  size={40}
-                                  version={status?.serverVersion || bot.serverVersion || "1.21.4"}
-                                />
-                                <span className="absolute bottom-0 right-0.5 text-[10px] font-bold text-foreground drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
-                                  {item.totalCount > 999 ? `${Math.floor(item.totalCount / 1000)}k` : item.totalCount}
-                                </span>
+                        {itemsData?.items?.map((item: any, index: number) => {
+                          const isFilledShulker = item.isShulkerBox && item.hasContents;
+                          const isExpanded = expandedShulkerIds.has(item.shulkerId);
+                          // Use a more unique key that combines shulkerId, itemId, and index
+                          const uniqueKey = item.shulkerId || `${item.itemId}-${index}`;
+                          const shulkerColors = isFilledShulker ? getShulkerColor(item.itemId) : null;
+                          
+                          if (isFilledShulker) {
+                            // Aggregate shulker contents by itemId for display
+                            const aggregatedContents: Array<{
+                              itemId: string;
+                              itemName: string;
+                              count: number;
+                              sources: any[]; // Original slot items for selection
+                            }> = [];
+                            
+                            for (const slotItem of item.shulkerContents || []) {
+                              const existing = aggregatedContents.find(a => a.itemId === slotItem.itemId);
+                              if (existing) {
+                                existing.count += slotItem.count;
+                                existing.sources.push(slotItem);
+                              } else {
+                                aggregatedContents.push({
+                                  itemId: slotItem.itemId,
+                                  itemName: slotItem.itemName,
+                                  count: slotItem.count,
+                                  sources: [slotItem],
+                                });
+                              }
+                            }
+                            
+                            // Filled shulker box with sliding contents
+                            return (
+                              <div key={uniqueKey} className="relative flex items-center">
+                                {/* Shulker box button - higher z-index to be on top */}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      onClick={() => setExpandedShulkerIds(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(item.shulkerId)) {
+                                          next.delete(item.shulkerId);
+                                        } else {
+                                          next.add(item.shulkerId);
+                                        }
+                                        return next;
+                                      })}
+                                      className={`w-12 h-12 rounded-md bg-muted/30 hover:bg-muted/60 hover:ring-2 hover:ring-primary/50 transition-all cursor-pointer flex items-center justify-center relative z-10 ${
+                                        isExpanded ? "ring-2 ring-primary bg-muted/60" : ""
+                                      }`}
+                                    >
+                                      <ItemIcon
+                                        itemId={item.itemId}
+                                        itemName={item.itemName}
+                                        size={40}
+                                        version={status?.serverVersion || bot.serverVersion || "1.21.4"}
+                                      />
+                                      {/* Filled indicator badge - squared with rounded corners */}
+                                      <span className="absolute -top-1 -right-1 h-4 w-4 bg-primary rounded flex items-center justify-center">
+                                        <Package className="h-2.5 w-2.5 text-primary-foreground" />
+                                      </span>
+                                      <span className="absolute bottom-0 right-0.5 text-[10px] font-bold text-foreground drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+                                        {aggregatedContents.length}
+                                      </span>
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-xs">
+                                    <div className="font-medium">{item.itemName}</div>
+                                    <div className="text-muted-foreground">
+                                      Contains: <span className="font-mono">{aggregatedContents.length}</span> item types
+                                    </div>
+                                    <div className="text-muted-foreground text-[10px]">
+                                      Click to {isExpanded ? "collapse" : "expand"}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                                
+                                {/* Sliding shulker contents - slides from behind the shulker */}
+                                <div 
+                                  className="overflow-hidden"
+                                  style={{
+                                    width: isExpanded ? `${aggregatedContents.length * 36 + 4}px` : '0px',
+                                    transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                  }}
+                                >
+                                  <div
+                                    className="flex items-center gap-1 pl-1 h-12"
+                                    style={{
+                                      transform: isExpanded ? 'translateX(0)' : 'translateX(-100%)',
+                                      opacity: isExpanded ? 1 : 0,
+                                      transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.15s ease-in-out',
+                                    }}
+                                  >
+                                    {aggregatedContents.map((aggItem, idx) => {
+                                      const contentKey = `shulker-agg:${aggItem.sources[0]?.shulkerChestItemId}:${aggItem.itemId}`;
+                                      const isContentSelected = selectedItems.has(contentKey);
+                                      
+                                      return (
+                                        <Tooltip key={idx}>
+                                          <TooltipTrigger asChild>
+                                            <button 
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleAggregatedShulkerContent(aggItem);
+                                              }}
+                                              className={`w-8 h-8 rounded border-2 flex items-center justify-center relative shrink-0 transition-all ${
+                                                isContentSelected 
+                                                  ? "bg-green-500/20 border-green-500" 
+                                                  : `bg-muted/30 hover:bg-muted/50 ${shulkerColors?.border}`
+                                              }`}
+                                            >
+                                              <ItemIcon
+                                                itemId={aggItem.itemId}
+                                                itemName={aggItem.itemName}
+                                                size={24}
+                                                version={status?.serverVersion || bot.serverVersion || "1.21.4"}
+                                              />
+                                              {isContentSelected && (
+                                                <span className="absolute -top-1 -right-1 h-3 w-3 bg-green-500 rounded-full flex items-center justify-center">
+                                                  <Check className="h-2 w-2 text-white" />
+                                                </span>
+                                              )}
+                                              <span className="absolute bottom-0 right-0 text-[8px] font-bold text-foreground drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+                                                {aggItem.count > 99 ? "99+" : aggItem.count > 1 ? aggItem.count : ""}
+                                              </span>
+                                            </button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top" className="text-xs">
+                                            <div className="font-medium">{aggItem.itemName}</div>
+                                            <div className="text-muted-foreground">
+                                              Count: <span className="font-mono">{aggItem.count}</span>
+                                            </div>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               </div>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="text-xs">
-                              <div className="font-medium">{item.itemName}</div>
-                              <div className="text-muted-foreground">
-                                Count: <span className="font-mono">{item.totalCount}</span>
-                              </div>
-                              {item.locations?.[0] && (
+                            );
+                          }
+                          
+                          // Regular item or empty shulker box (aggregated)
+                          const isSelected = selectedItems.has(item.itemId);
+                          
+                          return (
+                            <Tooltip key={uniqueKey}>
+                              <TooltipTrigger asChild>
+                                <div 
+                                  className={`w-12 h-12 rounded-md hover:bg-muted/60 hover:ring-2 hover:ring-primary/50 hover:z-10 transition-all cursor-pointer flex items-center justify-center relative ${
+                                    isSelected 
+                                      ? "ring-2 ring-green-500 bg-green-500/10" 
+                                      : "bg-muted/30"
+                                  }`}
+                                  onClick={() => toggleItemSelection(item.itemId, item.itemName, item.totalCount)}
+                                >
+                                  <ItemIcon
+                                    itemId={item.itemId}
+                                    itemName={item.itemName}
+                                    size={40}
+                                    version={serverVersion}
+                                  />
+                                  {isSelected && (
+                                    <span className="absolute -top-1 -right-1 h-4 w-4 bg-green-500 rounded-full flex items-center justify-center">
+                                      <Check className="h-2.5 w-2.5 text-white" />
+                                    </span>
+                                  )}
+                                  <span className="absolute bottom-0 right-0.5 text-[10px] font-bold text-foreground drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+                                    {item.totalCount > 999 ? `${Math.floor(item.totalCount / 1000)}k` : item.totalCount}
+                                  </span>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="text-xs">
+                                <div className="font-medium">{item.itemName}</div>
                                 <div className="text-muted-foreground">
-                                  Location: <span className="font-mono">{item.locations[0].x}, {item.locations[0].y}, {item.locations[0].z}</span>
+                                  Total: {item.totalCount} • {item.locations?.length || 1} location{(item.locations?.length || 1) > 1 ? 's' : ''}
                                 </div>
-                              )}
-                              {item.locations?.length > 1 && (
-                                <div className="text-muted-foreground text-[10px]">
-                                  +{item.locations.length - 1} more locations
-                                </div>
-                              )}
-                            </TooltipContent>
-                          </Tooltip>
-                        ))}
+                              </TooltipContent>
+                            </Tooltip>
+                          );
+                        })}
                       </div>
                     </ScrollArea>
+                  )}
+                </div>
+
+                {/* Selection Bar - appears when items are selected */}
+                {selectedItems.size > 0 && (
+                  <div className="flex items-center justify-end gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {selectedItems.size} item{selectedItems.size > 1 ? "s" : ""} · {Array.from(selectedItems.values()).reduce((sum, i) => sum + i.count, 0)} total
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={clearSelection}
+                    >
+                      <X className="mr-1 h-3 w-3" />
+                      Clear
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => setCreateTaskDialogOpen(true)}
+                      disabled={!isOnline}
+                    >
+                      <ShoppingCart className="mr-1 h-3 w-3" />
+                      Request
+                    </Button>
+                  </div>
+                )}
+
+                {/* Tasks Section */}
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setShowTasks(!showTasks)}
+                    className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showTasks ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                    <ClipboardList className="h-4 w-4" />
+                    Active Requests
+                  </button>
+                  {showTasks && (
+                    <TaskList botId={bot.id} serverVersion={serverVersion} />
                   )}
                 </div>
               </>
@@ -581,6 +985,19 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
           </div>
         </CollapsibleContent>
       </div>
+
+      {/* Create Task Dialog */}
+      {selectedStorageId && (
+        <CreateTaskDialog
+          open={createTaskDialogOpen}
+          onOpenChange={setCreateTaskDialogOpen}
+          botId={bot.id}
+          storageSystemId={selectedStorageId}
+          selectedItems={selectedItemsArray}
+          onClearSelection={clearSelection}
+          serverVersion={serverVersion}
+        />
+      )}
     </Collapsible>
   );
 }
@@ -588,7 +1005,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
 export default function DashboardPage() {
   const { data: bots, isLoading } = useBots();
   const { data: publicBots } = usePublicBots();
-  const { socket, subscribeTo } = useSocket();
+  const { socket, subscribeTo, unsubscribeFrom } = useSocket();
   const queryClient = useQueryClient();
 
   // Subscribe to all bots for live updates
@@ -596,7 +1013,14 @@ export default function DashboardPage() {
     if (bots && bots.length > 0) {
       bots.forEach((bot: any) => subscribeTo(bot.id));
     }
-  }, [bots, subscribeTo]);
+    
+    // Cleanup: unsubscribe when component unmounts or bots change
+    return () => {
+      if (bots && bots.length > 0) {
+        bots.forEach((bot: any) => unsubscribeFrom(bot.id));
+      }
+    };
+  }, [bots, subscribeTo, unsubscribeFrom]);
 
   // Listen for socket events that should trigger data refresh
   useEffect(() => {

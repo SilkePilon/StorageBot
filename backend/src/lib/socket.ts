@@ -2,6 +2,7 @@ import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { config } from '../config/index.js';
 import jwt from 'jsonwebtoken';
+import { prisma } from './prisma.js';
 
 let io: Server | null = null;
 
@@ -47,10 +48,32 @@ export function initializeSocket(httpServer: HttpServer): Server {
       console.log(`Client disconnected: ${socket.id}`);
     });
 
-    // Bot-specific room joining
-    socket.on('bot:subscribe', (botId: string) => {
-      socket.join(`bot:${botId}`);
-      console.log(`Socket ${socket.id} subscribed to bot:${botId}`);
+    // Bot-specific room joining with authorization check
+    socket.on('bot:subscribe', async (botId: string) => {
+      try {
+        // Verify user has access to this bot
+        const bot = await prisma.bot.findUnique({
+          where: { id: botId },
+          select: { userId: true, isPublic: true },
+        });
+        
+        if (!bot) {
+          socket.emit('error', { message: 'Bot not found' });
+          return;
+        }
+        
+        const canAccess = bot.userId === socket.userId || bot.isPublic;
+        if (!canAccess) {
+          socket.emit('error', { message: 'Access denied to bot' });
+          return;
+        }
+        
+        socket.join(`bot:${botId}`);
+        console.log(`Socket ${socket.id} subscribed to bot:${botId}`);
+      } catch (error) {
+        console.error('Error subscribing to bot:', error);
+        socket.emit('error', { message: 'Failed to subscribe to bot' });
+      }
     });
 
     socket.on('bot:unsubscribe', (botId: string) => {

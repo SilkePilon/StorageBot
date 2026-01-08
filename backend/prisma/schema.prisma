@@ -112,6 +112,10 @@ model ChestItem {
   count     Int
   nbt       Json?
 
+  // If this item is a shulker box with contents
+  isShulkerBox     Boolean     @default(false)
+  shulkerContents  ShulkerContent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -119,4 +123,122 @@ model ChestItem {
   @@index([chestId])
   @@index([itemId])
   @@index([itemName])
+  @@index([isShulkerBox])
+}
+
+model ShulkerContent {
+  id          String    @id @default(uuid())
+  chestItemId String
+  chestItem   ChestItem @relation(fields: [chestItemId], references: [id], onDelete: Cascade)
+
+  slot        Int       // 0-26 for shulker box slots
+  itemId      String
+  itemName    String
+  count       Int
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([chestItemId, slot])
+  @@index([chestItemId])
+  @@index([itemId])
+  @@index([itemName])
+}
+
+// ============ REQUEST TASKS ============
+
+enum TaskStatus {
+  PENDING      // Waiting in queue
+  IN_PROGRESS  // Currently being executed
+  PAUSED       // Paused by user or waiting for decision
+  COMPLETED    // Successfully completed
+  FAILED       // Failed with error
+  CANCELLED    // Cancelled by user
+}
+
+enum DeliveryMethod {
+  DROP_TO_PLAYER  // Walk to player and drop items
+  PUT_IN_CHEST    // Put items in a specified chest location
+  SHULKER_DROP    // Pack in shulkers and drop to player
+  SHULKER_CHEST   // Pack in shulkers and put in chest
+}
+
+enum PackingMode {
+  SELECTION_ORDER // Pack items in the order they were selected
+  OPTIMIZED       // Group same items together for efficient packing
+}
+
+model RequestTask {
+  id              String       @id @default(uuid())
+  botId           String
+  storageSystemId String
+  
+  // Task metadata
+  name            String?      // Optional user-friendly name
+  status          TaskStatus   @default(PENDING)
+  queuePosition   Int          @default(0)
+  
+  // Delivery configuration
+  deliveryMethod  DeliveryMethod
+  packingMode     PackingMode  @default(OPTIMIZED)
+  
+  // For DROP_TO_PLAYER / SHULKER_DROP
+  targetPlayer    String?      // Minecraft username to drop items to
+  
+  // For PUT_IN_CHEST / SHULKER_CHEST - location to walk to (chest within 4 blocks)
+  deliveryX       Int?
+  deliveryY       Int?
+  deliveryZ       Int?
+  
+  // Progress tracking
+  currentStep     String?      // Current action description
+  totalItems      Int          @default(0)
+  collectedItems  Int          @default(0)
+  
+  // Error handling
+  errorMessage    String?
+  requiresInput   Boolean      @default(false) // True when waiting for user decision
+  
+  // Shulker tracking - IDs of empty shulkers selected by user
+  selectedShulkerIds String[]  @default([])
+  shulkersNeeded  Int          @default(0)
+  shulkersFilled  Int          @default(0)
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  completedAt     DateTime?
+  
+  items           RequestItem[]
+  
+  @@index([botId])
+  @@index([status])
+  @@index([queuePosition])
+}
+
+model RequestItem {
+  id            String      @id @default(uuid())
+  taskId        String
+  task          RequestTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  // Item info
+  itemId        String      // minecraft item id
+  itemName      String      // display name
+  requestedCount Int        // how many the user requested
+  collectedCount Int        @default(0) // how many have been collected
+  
+  // Source locations (cached from when task was created)
+  sourceLocations Json      // Array of { chestId, x, y, z, slot, available }
+  
+  // Status
+  status        String      @default("pending") // pending, collecting, partial, complete, skipped, failed
+  errorMessage  String?
+  
+  // User decision for partial availability
+  userDecision  String?     // "take_available", "skip", null (waiting)
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([taskId])
+  @@index([status])
 }

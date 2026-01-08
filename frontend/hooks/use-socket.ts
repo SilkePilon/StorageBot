@@ -20,6 +20,9 @@ export function useSocket() {
       return;
     }
 
+    // Disconnect existing socket if token changed (will be recreated with new token)
+    disconnectSocket();
+    
     const s = getSocket(token);
     setSocket(s);
 

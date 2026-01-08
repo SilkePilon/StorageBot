@@ -18,7 +18,7 @@ export default function DashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, token } = useAuthStore();
   const [mounted, setMounted] = useState(false);
   
   // Initialize socket connection
@@ -28,18 +28,21 @@ export default function DashboardLayout({
     setMounted(true);
   }, []);
 
+  // Subscribe to actual auth state (token) to detect session expiration
+  const isLoggedIn = isAuthenticated();
+  
   useEffect(() => {
-    if (mounted && !isAuthenticated()) {
+    if (mounted && !isLoggedIn) {
       router.push("/login");
     }
-  }, [mounted, isAuthenticated, router]);
+  }, [mounted, isLoggedIn, router, token]);
 
   // Don't render anything until mounted to prevent hydration mismatch
   if (!mounted) {
     return null;
   }
 
-  if (!isAuthenticated()) {
+  if (!isLoggedIn) {
     return null;
   }
 

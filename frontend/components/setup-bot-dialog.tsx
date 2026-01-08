@@ -242,7 +242,12 @@ export function SetupBotDialog({
       return;
     }
 
-    await updateBot.mutateAsync({ id: botId, data: { microsoftEmail } });
+    try {
+      await updateBot.mutateAsync({ id: botId, data: { microsoftEmail } });
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to update bot");
+      return;
+    }
     
     startAuth.mutate(botId, {
       onSuccess: (data) => {

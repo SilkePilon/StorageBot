@@ -9,6 +9,7 @@ import { BotManager } from './bot/BotManager.js';
 import authRoutes from './routes/auth.js';
 import botsRoutes from './routes/bots.js';
 import storageRoutes from './routes/storage.js';
+import tasksRoutes from './routes/tasks.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -32,6 +33,7 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/bots', botsRoutes);
 app.use('/api/storage', storageRoutes);
+app.use('/api/tasks', tasksRoutes);
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -40,17 +42,21 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('Shutting down...');
+const gracefulShutdown = async (signal: string) => {
+  console.log(`Received ${signal}. Shutting down gracefully...`);
+  
+  // Stop accepting new connections
+  httpServer.close(() => {
+    console.log('HTTP server closed');
+  });
+  
   await BotManager.getInstance().shutdown();
   process.exit(0);
-});
+};
 
-process.on('SIGTERM', async () => {
-  console.log('Shutting down...');
-  await BotManager.getInstance().shutdown();
-  process.exit(0);
-});
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 // Start server
 httpServer.listen(config.port, () => {

@@ -65,8 +65,12 @@ export class BotManager {
       throw new Error('Microsoft email not configured');
     }
 
-    // Create auth cache directory
-    const cacheDir = `./auth_cache/${botId}`;
+    // Create auth cache directory - sanitize botId to prevent path traversal
+    const sanitizedBotId = botId.replace(/[^a-zA-Z0-9-]/g, '');
+    if (sanitizedBotId !== botId) {
+      throw new Error('Invalid bot ID format');
+    }
+    const cacheDir = `./auth_cache/${sanitizedBotId}`;
     if (!fs.existsSync(cacheDir)) {
       fs.mkdirSync(cacheDir, { recursive: true });
     }
@@ -243,7 +247,110 @@ export class BotManager {
     // Run indexing in background
     bot.indexStorage(storageId).catch((error) => {
       console.error('Indexing error:', error);
+      emitToBot(botId, 'storage:indexError', {
+        botId,
+        storageId,
+        error: (error as Error).message,
+      });
     });
+  }
+
+  // ============ TASK QUEUE MANAGEMENT ============
+
+  private taskQueues: Map<string, boolean> = new Map(); // botId -> isProcessing
+
+  async processTaskQueue(botId: string): Promise<void> {
+    // Prevent concurrent processing for the same bot
+    if (this.taskQueues.get(botId)) {
+      return;
+    }
+
+    const bot = this.bots.get(botId);
+    if (!bot || !bot.getStatus().connected) {
+      console.log(`[TaskQueue] Bot ${botId} not connected, skipping queue processing`);
+      return;
+    }
+
+    this.taskQueues.set(botId, true);
+
+    try {
+      while (true) {
+        // Get the next pending task
+        const task = await prisma.requestTask.findFirst({
+          where: {
+            botId,
+            status: 'PENDING',
+          },
+          orderBy: { queuePosition: 'asc' },
+          include: { items: true },
+        });
+
+        if (!task) {
+          console.log(`[TaskQueue] No pending tasks for bot ${botId}`);
+          break;
+        }
+
+        console.log(`[TaskQueue] Processing task ${task.id} for bot ${botId}`);
+
+        // Update task to in-progress
+        await prisma.requestTask.update({
+          where: { id: task.id },
+          data: { status: 'IN_PROGRESS', currentStep: 'Starting...' },
+        });
+
+        emitToBot(botId, 'task:updated', {
+          task: { ...task, status: 'IN_PROGRESS', currentStep: 'Starting...' },
+        });
+
+        try {
+          await bot.executeTask(task);
+
+          // Mark as completed
+          await prisma.requestTask.update({
+            where: { id: task.id },
+            data: {
+              status: 'COMPLETED',
+              currentStep: 'Completed',
+              completedAt: new Date(),
+            },
+          });
+
+          const completedTask = await prisma.requestTask.findUnique({
+            where: { id: task.id },
+            include: { items: true },
+          });
+
+          emitToBot(botId, 'task:completed', { task: completedTask });
+        } catch (error) {
+          console.error(`[TaskQueue] Task ${task.id} failed:`, error);
+
+          await prisma.requestTask.update({
+            where: { id: task.id },
+            data: {
+              status: 'FAILED',
+              errorMessage: (error as Error).message,
+              completedAt: new Date(),
+            },
+          });
+
+          const failedTask = await prisma.requestTask.findUnique({
+            where: { id: task.id },
+            include: { items: true },
+          });
+
+          emitToBot(botId, 'task:failed', { task: failedTask, error: (error as Error).message });
+        }
+      }
+    } finally {
+      this.taskQueues.set(botId, false);
+    }
+  }
+
+  cancelTask(botId: string, taskId: string): void {
+    const bot = this.bots.get(botId);
+    if (bot) {
+      bot.cancelCurrentTask(taskId);
+    }
   }
 
   async shutdown(): Promise<void> {

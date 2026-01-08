@@ -232,7 +232,7 @@ router.post('/:id/index', async (req: AuthRequest, res) => {
 // Get items in storage (with search)
 router.get('/:id/items', async (req: AuthRequest, res) => {
   try {
-    const { search, page = '1', limit = '50' } = req.query;
+    const { search, page = '1', limit = '100' } = req.query;
 
     const storage = await prisma.storageSystem.findUnique({
       where: { id: req.params.id },
@@ -255,90 +255,176 @@ router.get('/:id/items', async (req: AuthRequest, res) => {
       return;
     }
 
-    const pageNum = parseInt(page as string, 10);
-    const limitNum = parseInt(limit as string, 10);
-    const skip = (pageNum - 1) * limitNum;
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    const limitNum = Math.min(1000, Math.max(1, parseInt(limit as string, 10) || 100));
 
-    const where: any = {
+    // Build search conditions - search both chest items AND shulker contents
+    const searchStr = search ? (search as string).toLowerCase() : null;
+    
+    let where: any = {
       chest: {
         storageSystemId: req.params.id,
       },
     };
 
-    if (search) {
-      where.itemName = {
-        contains: search as string,
-        mode: 'insensitive',
+    if (searchStr) {
+      // Search in item names OR in shulker contents
+      where = {
+        chest: {
+          storageSystemId: req.params.id,
+        },
+        OR: [
+          {
+            itemName: {
+              contains: searchStr,
+              mode: 'insensitive',
+            },
+          },
+          {
+            shulkerContents: {
+              some: {
+                itemName: {
+                  contains: searchStr,
+                  mode: 'insensitive',
+                },
+              },
+            },
+          },
+        ],
       };
     }
 
-    const [items, total] = await Promise.all([
-      prisma.chestItem.findMany({
-        where,
-        include: {
-          chest: {
-            select: {
-              x: true,
-              y: true,
-              z: true,
-              chestType: true,
-              lastOpened: true,
-            },
+    // Fetch ALL items first (no pagination at DB level) so we can aggregate properly
+    // Pagination is applied AFTER aggregation
+    const items = await prisma.chestItem.findMany({
+      where,
+      include: {
+        chest: {
+          select: {
+            x: true,
+            y: true,
+            z: true,
+            chestType: true,
+            lastOpened: true,
           },
         },
-        skip,
-        take: limitNum,
-        orderBy: { itemName: 'asc' },
-      }),
-      prisma.chestItem.count({ where }),
-    ]);
+        shulkerContents: true,
+      },
+      orderBy: { itemName: 'asc' },
+    });
 
     // Aggregate items by name for summary
+    // Items can come from chests directly OR from inside shulker boxes
+    interface ItemLocation {
+      x: number;
+      y: number;
+      z: number;
+      count: number;
+      lastOpened: Date | null;
+      // For items inside shulkers
+      fromShulker?: boolean;
+      shulkerChestItemId?: string;  // ChestItem.id of the shulker
+      shulkerSlotInChest?: number;  // Slot of shulker in the chest
+      slotInShulker?: number;       // Slot of item inside the shulker
+      shulkerContentId?: string;    // ShulkerContent.id
+    }
+
     interface AggregatedItem {
       itemId: string;
       itemName: string;
       totalCount: number;
-      locations: { x: number; y: number; z: number; count: number; lastOpened: Date | null }[];
+      isShulkerBox: boolean;
+      hasContents: boolean;
+      shulkerContents?: { slot: number; itemId: string; itemName: string; count: number }[];
+      shulkerId?: string; // unique ID for filled shulkers
+      locations: ItemLocation[];
+      hasShulkerSources?: boolean; // True if some of this item comes from inside shulkers
     }
-    type ItemWithChest = typeof items[number];
-    const aggregated = items.reduce((acc: AggregatedItem[], item: ItemWithChest) => {
-      const existing = acc.find((i: AggregatedItem) => i.itemId === item.itemId);
-      if (existing) {
-        existing.totalCount += item.count;
-        existing.locations.push({
-          x: item.chest.x,
-          y: item.chest.y,
-          z: item.chest.z,
-          count: item.count,
-          lastOpened: item.chest.lastOpened,
-        });
-      } else {
-        acc.push({
+    
+    const aggregated: AggregatedItem[] = [];
+    
+    for (const item of items) {
+      const isFilledShulker = item.isShulkerBox && item.shulkerContents && item.shulkerContents.length > 0;
+      
+      if (isFilledShulker) {
+        // Filled shulker boxes are always shown individually
+        // Include source info in shulkerContents so frontend can select items from inside
+        aggregated.push({
           itemId: item.itemId,
           itemName: item.itemName,
           totalCount: item.count,
-          locations: [
-            {
+          isShulkerBox: true,
+          hasContents: true,
+          shulkerId: item.id,
+          shulkerContents: item.shulkerContents.map((c) => ({
+            id: c.id,  // ShulkerContent.id for selection
+            slot: c.slot,
+            itemId: c.itemId,
+            itemName: c.itemName,
+            count: c.count,
+            // Source info for task creation
+            shulkerChestItemId: item.id,
+            shulkerSlotInChest: item.slot,
+            chestX: item.chest.x,
+            chestY: item.chest.y,
+            chestZ: item.chest.z,
+          })),
+          locations: [{
+            x: item.chest.x,
+            y: item.chest.y,
+            z: item.chest.z,
+            count: item.count,
+            lastOpened: item.chest.lastOpened,
+          }],
+        });
+        // Items inside shulkers are NOT added to main list - only selectable from shulker view
+      } else {
+        // Regular items and empty shulkers can be aggregated
+        const existing = aggregated.find(
+          (i) => i.itemId === item.itemId && !i.hasContents
+        );
+        
+        if (existing) {
+          existing.totalCount += item.count;
+          existing.locations.push({
+            x: item.chest.x,
+            y: item.chest.y,
+            z: item.chest.z,
+            count: item.count,
+            lastOpened: item.chest.lastOpened,
+          });
+        } else {
+          aggregated.push({
+            itemId: item.itemId,
+            itemName: item.itemName,
+            totalCount: item.count,
+            isShulkerBox: item.isShulkerBox,
+            hasContents: false,
+            locations: [{
               x: item.chest.x,
               y: item.chest.y,
               z: item.chest.z,
               count: item.count,
               lastOpened: item.chest.lastOpened,
-            },
-          ],
-        });
+            }],
+          });
+        }
       }
-      return acc;
-    }, [] as any[]);
+    }
+
+    // Apply pagination AFTER aggregation
+    const totalAggregated = aggregated.length;
+    const skip = (pageNum - 1) * limitNum;
+    const paginatedItems = aggregated.slice(skip, skip + limitNum);
 
     res.json({
-      items: aggregated,
+      items: paginatedItems,
       lastIndexed: storage.lastIndexed,
       pagination: {
         page: pageNum,
         limit: limitNum,
-        total,
-        totalPages: Math.ceil(total / limitNum),
+        total: totalAggregated,
+        totalPages: Math.ceil(totalAggregated / limitNum),
       },
     });
   } catch (error) {

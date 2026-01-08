@@ -43,6 +43,12 @@ export async function authMiddleware(
     req.user = user;
     next();
   } catch (error) {
-    res.status(401).json({ error: 'Invalid token' });
+    // Only return 401 for JWT-specific errors
+    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+      res.status(401).json({ error: 'Invalid token' });
+      return;
+    }
+    // Pass other errors to error handler
+    next(error);
   }
 }

@@ -2,12 +2,13 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { config } from '../config/index.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
 const signOptions: SignOptions = {
-  expiresIn: '7d',
+  expiresIn: config.jwt.expiresIn as string,
 };
 
 const router = Router();
@@ -63,6 +64,11 @@ router.post('/register', async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.errors });
+      return;
+    }
+    // Handle Prisma unique constraint violation (race condition)
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      res.status(409).json({ error: 'Email already registered' });
       return;
     }
     console.error('Register error:', error);

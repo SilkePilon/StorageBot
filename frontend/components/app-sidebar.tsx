@@ -52,6 +52,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user, logout } = useAuthStore()
   const { data: bots } = useBots()
   const botStatuses = useBotStore((state) => state.botStatuses)
+  const expandedBotId = useBotStore((state) => state.expandedBotId)
 
   const handleLogout = () => {
     logout()
@@ -135,7 +136,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <SidebarMenuItem key={bot.id}>
                       <SidebarMenuButton
                         tooltip={bot.name}
-                        isActive={useBotStore.getState().expandedBotId === bot.id}
+                        isActive={expandedBotId === bot.id}
                         onClick={() => {
                           useBotStore.getState().setExpandedBot(bot.id)
                           router.push("/dashboard")

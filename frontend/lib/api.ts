@@ -194,3 +194,74 @@ export const storageApi = {
       usagePercent: number;
     }>(`/api/storage/${id}/stats`, { token }),
 };
+
+// Tasks
+export const tasksApi = {
+  listForBot: (token: string, botId: string) =>
+    fetchApi<any[]>(`/api/tasks/bot/${botId}`, { token }),
+
+  get: (token: string, id: string) =>
+    fetchApi<any>(`/api/tasks/${id}`, { token }),
+
+  create: (
+    token: string,
+    data: {
+      botId: string;
+      storageSystemId: string;
+      name?: string;
+      deliveryMethod: 'DROP_TO_PLAYER' | 'PUT_IN_CHEST' | 'SHULKER_DROP' | 'SHULKER_CHEST';
+      packingMode?: 'SELECTION_ORDER' | 'OPTIMIZED';
+      targetPlayer?: string;
+      deliveryX?: number;
+      deliveryY?: number;
+      deliveryZ?: number;
+      selectedShulkerIds?: string[];
+      items: { 
+        itemId: string; 
+        itemName: string; 
+        requestedCount: number;
+        // Optional shulker source info
+        fromShulker?: boolean;
+        shulkerContentId?: string;
+        shulkerChestItemId?: string;
+        shulkerSlotInChest?: number;
+        slotInShulker?: number;
+        chestX?: number;
+        chestY?: number;
+        chestZ?: number;
+      }[];
+    }
+  ) =>
+    fetchApi<any>("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  updateItemDecision: (
+    token: string,
+    taskId: string,
+    itemId: string,
+    decision: 'take_available' | 'skip'
+  ) =>
+    fetchApi<any>(`/api/tasks/${taskId}/items/${itemId}/decision`, {
+      method: "PATCH",
+      body: JSON.stringify({ decision }),
+      token,
+    }),
+
+  cancel: (token: string, id: string) =>
+    fetchApi<any>(`/api/tasks/${id}/cancel`, {
+      method: "POST",
+      token,
+    }),
+
+  delete: (token: string, id: string) =>
+    fetchApi<void>(`/api/tasks/${id}`, {
+      method: "DELETE",
+      token,
+    }),
+
+  getEmptyShulkers: (token: string, storageId: string) =>
+    fetchApi<any[]>(`/api/tasks/storage/${storageId}/empty-shulkers`, { token }),
+};
