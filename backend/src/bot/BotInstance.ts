@@ -120,6 +120,7 @@ export class BotInstance extends EventEmitter {
             profilesFolder: `./auth_cache/${this.id}`,
             onMsaCode: (data: { user_code: string; verification_uri: string; message: string }) => {
               // Emit the device code to the frontend via WebSocket
+              console.log(`[Bot ${this.id}] Emitting bot:msaCode to room bot:${this.id}`);
               emitToBot(this.id, 'bot:msaCode', {
                 botId: this.id,
                 userCode: data.user_code,
@@ -761,9 +762,20 @@ export class BotInstance extends EventEmitter {
     this.currentTaskId = task.id;
     this.taskCancelled = false;
 
+    console.log(`[Task ${task.id}] Executing task with ${task.items?.length || 0} items, deliveryMethod: ${task.deliveryMethod}`);
+    console.log(`[Task ${task.id}] Items:`, JSON.stringify(task.items?.map((i: any) => ({ 
+      id: i.id, 
+      itemId: i.itemId, 
+      status: i.status, 
+      sourceLocationsCount: i.sourceLocations?.length,
+      requestedCount: i.requestedCount 
+    })), null, 2));
+
     try {
       // Always collect items first (handles both direct chest items AND items from inside shulkers)
       const collectedItems = await this.collectTaskItems(task);
+
+      console.log(`[Task ${task.id}] Collected items:`, Array.from(collectedItems.entries()));
 
       if (this.taskCancelled) {
         throw new Error('Task cancelled');
@@ -771,6 +783,8 @@ export class BotInstance extends EventEmitter {
 
       // Check if we collected anything
       const totalCollected = Array.from(collectedItems.values()).reduce((sum, count) => sum + count, 0);
+      
+      console.log(`[Task ${task.id}] Total collected: ${totalCollected}`);
       
       if (totalCollected === 0) {
         // No items were collected - fail the task
@@ -813,15 +827,30 @@ export class BotInstance extends EventEmitter {
   private async collectTaskItems(task: any): Promise<Map<string, number>> {
     const collected = new Map<string, number>();
 
+    console.log(`[Task ${task.id}] Starting item collection for ${task.items.length} item types`);
+
     // Build a map of all items we need to collect, keyed by item.id
     const itemsNeeded = new Map<string, { item: any; remaining: number }>();
     for (const item of task.items) {
       if (item.status === 'skipped') continue;
       const locations = item.sourceLocations as any[];
+      console.log(`[Task ${task.id}] Item ${item.itemName}: ${locations?.length || 0} source locations, fromShulker in any: ${locations?.some((l: any) => l.fromShulker)}`);
+      
+      if (!locations || locations.length === 0) {
+        console.log(`[Task ${task.id}] WARNING: No source locations for item ${item.itemName}`);
+        continue;
+      }
+      
       const remaining = item.userDecision === 'take_available'
         ? Math.min(item.requestedCount, locations.reduce((sum: number, l: any) => sum + l.available, 0))
         : item.requestedCount;
       itemsNeeded.set(item.id, { item, remaining });
+    }
+
+    console.log(`[Task ${task.id}] Items needed after filtering: ${itemsNeeded.size}`);
+    if (itemsNeeded.size === 0) {
+      console.log(`[Task ${task.id}] No items needed - returning empty`);
+      return collected;
     }
 
     // Separate direct chest items from shulker sources
@@ -862,13 +891,24 @@ export class BotInstance extends EventEmitter {
       if (item.status === 'skipped') continue;
       const locations = item.sourceLocations as any[];
       
+      if (!locations || locations.length === 0) {
+        console.log(`[Task ${task.id}] Skipping item ${item.itemName} - no locations`);
+        continue;
+      }
+      
       for (const loc of locations) {
+        if (loc.x === undefined || loc.y === undefined || loc.z === undefined) {
+          console.log(`[Task ${task.id}] Invalid location for ${item.itemName}:`, loc);
+          continue;
+        }
+        
         const key = `${loc.x},${loc.y},${loc.z}`;
         if (!chestPlans.has(key)) {
           chestPlans.set(key, { x: loc.x, y: loc.y, z: loc.z, directSlots: [], shulkerSlots: [] });
         }
         
         if (loc.fromShulker) {
+          console.log(`[Task ${task.id}] Adding shulker slot for ${item.itemName} at ${key}, shulker slot in chest: ${loc.slot}, item slot in shulker: ${loc.slotInShulker}`);
           chestPlans.get(key)!.shulkerSlots.push({
             slot: loc.slot,
             itemId: item.itemId,
@@ -891,6 +931,11 @@ export class BotInstance extends EventEmitter {
           });
         }
       }
+    }
+
+    console.log(`[Task ${task.id}] Chest plans: ${chestPlans.size} chests to visit`);
+    for (const [key, plan] of chestPlans) {
+      console.log(`[Task ${task.id}] Chest ${key}: ${plan.directSlots.length} direct, ${plan.shulkerSlots.length} shulker slots`);
     }
 
     // Sort chest plans by distance for optimal pathing

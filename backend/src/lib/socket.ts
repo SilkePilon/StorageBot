@@ -99,5 +99,9 @@ export function emitToUser(userId: string, event: string, data: unknown): void {
 
 // Emit to specific bot subscribers
 export function emitToBot(botId: string, event: string, data: unknown): void {
-  getIO().to(`bot:${botId}`).emit(event, data);
+  const io = getIO();
+  const room = `bot:${botId}`;
+  const sockets = io.sockets.adapter.rooms.get(room);
+  console.log(`[Socket] Emitting ${event} to room ${room}, ${sockets?.size || 0} subscribers`);
+  io.to(room).emit(event, data);
 }

@@ -124,6 +124,7 @@ export function SetupBotDialog({
 
   useEffect(() => {
     if (open && botId) {
+      console.log('[SetupBotDialog] Subscribing to bot:', botId);
       subscribeTo(botId);
     }
   }, [open, botId, subscribeTo]);
@@ -161,9 +162,12 @@ export function SetupBotDialog({
       };
 
       const handleMsaCode = (data: { userCode: string; verificationUri: string; message: string }) => {
+        console.log('[SetupBotDialog] Received bot:msaCode event:', data);
         setMsaCode({ userCode: data.userCode, verificationUri: data.verificationUri });
         toast.info("Authentication code received!");
       };
+      
+      console.log('[SetupBotDialog] Setting up bot:msaCode listener, socket connected:', socket.connected);
 
       const handleAuthComplete = (data: { success: boolean; profile?: any; error?: string }) => {
         if (data.success) {
