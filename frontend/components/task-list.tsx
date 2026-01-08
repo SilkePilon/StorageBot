@@ -137,7 +137,7 @@ export function TaskList({ botId, serverVersion = "1.21.4" }: TaskListProps) {
                 onDelete={() => setTaskToDelete(task.id)}
                 onItemDecision={(itemId, decision) => handleItemDecision(task.id, itemId, decision)}
                 serverVersion={serverVersion}
-                isUpdating={cancelTask.isPending}
+                isUpdating={cancelTask.isPending && cancelTask.variables === task.id}
               />
             ))}
           </div>

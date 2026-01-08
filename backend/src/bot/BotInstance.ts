@@ -963,7 +963,7 @@ export class BotInstance extends EventEmitter {
 
       if (directToCollect.length === 0 && shulkerToCollect.length === 0) continue;
 
-      this.updateTaskStep(task.id, `Opening chest at ${chestPlan.x}, ${chestPlan.y}, ${chestPlan.z}...`);
+      await this.updateTaskStep(task.id, `Opening chest at ${chestPlan.x}, ${chestPlan.y}, ${chestPlan.z}...`);
 
       try {
         await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
@@ -1119,49 +1119,53 @@ export class BotInstance extends EventEmitter {
             await this.sleep(100);
             shulkerContainer.close();
             await this.sleep(300);
-          }
-
-          // Break the shulker to pick it up
-          await this.bot!.dig(placedShulker!);
-          await this.sleep(500);
-
-          // Put the shulker back in the chest
-          await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
-          await this.sleep(200);
-
-          const chestAgain = await this.bot!.openContainer(block);
-          await this.sleep(100);
-
-          const shulkerToReturn = this.bot!.inventory.items().find((i) => i.name.includes('shulker_box'));
-          if (shulkerToReturn) {
-            // Try to put it in the original slot first
-            const originalSlotItem = chestAgain.containerItems().find((i) => i.slot === shulkerOriginalSlot);
             
-            if (!originalSlotItem) {
-              // Original slot is empty, deposit there
-              // Note: mineflayer deposit doesn't let you specify slot, so we just deposit
-              await chestAgain.deposit(shulkerToReturn.type, null, 1);
-            } else {
-              // Original slot is taken, find next available
-              await chestAgain.deposit(shulkerToReturn.type, null, 1);
+            // Break the shulker to pick it up (inside the if block where placedShulker is validated)
+            await this.bot!.dig(placedShulker);
+            await this.sleep(500);
+
+            // Put the shulker back in the chest
+            await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
+            await this.sleep(200);
+
+            const chestAgain = await this.bot!.openContainer(block);
+            await this.sleep(100);
+
+            const shulkerToReturn = this.bot!.inventory.items().find((i) => i.name.includes('shulker_box'));
+            if (shulkerToReturn) {
+              // Try to put it in the original slot first
+              const originalSlotItem = chestAgain.containerItems().find((i) => i.slot === shulkerOriginalSlot);
+              
+              if (!originalSlotItem) {
+                // Original slot is empty, deposit there
+                // Note: mineflayer deposit doesn't let you specify slot, so we just deposit
+                await chestAgain.deposit(shulkerToReturn.type, null, 1);
+              } else {
+                // Original slot is taken, find next available
+                await chestAgain.deposit(shulkerToReturn.type, null, 1);
+              }
+
+              // Update the shulker's slot in the database if it moved
+              const newSlot = chestAgain.containerItems().find((i) => i.name.includes('shulker_box') && i.type === shulkerToReturn.type);
+              if (newSlot && newSlot.slot !== shulkerOriginalSlot) {
+                await prisma.chestItem.update({
+                  where: { id: shulkerChestItemId },
+                  data: { slot: newSlot.slot },
+                }).catch(() => {});
+              }
             }
 
-            // Update the shulker's slot in the database if it moved
-            const newSlot = chestAgain.containerItems().find((i) => i.name.includes('shulker_box') && i.type === shulkerToReturn.type);
-            if (newSlot && newSlot.slot !== shulkerOriginalSlot) {
-              await prisma.chestItem.update({
-                where: { id: shulkerChestItemId },
-                data: { slot: newSlot.slot },
-              }).catch(() => {});
-            }
+            await this.sleep(100);
+            chestAgain.close();
+            await this.sleep(100);
+
+            // Emit storage update
+            emitToBot(this.id, 'storage:itemUpdated', {
+              storageId: task.storageSystemId,
+            });
+          } else {
+            console.log(`[Task ${task.id}] Failed to find placed shulker at ${placePos.x}, ${placePos.y}, ${placePos.z}`);
           }
-
-          await this.sleep(100);
-
-          // Emit storage update
-          emitToBot(this.id, 'storage:itemUpdated', {
-            storageId: task.storageSystemId,
-          });
 
           // Re-open chest to continue with other operations
           // Actually we need to close it first
@@ -1223,7 +1227,7 @@ export class BotInstance extends EventEmitter {
       throw new Error('No target player specified');
     }
 
-    this.updateTaskStep(task.id, `Walking to ${task.targetPlayer}...`);
+    await this.updateTaskStep(task.id, `Walking to ${task.targetPlayer}...`);
 
     // Find the player
     const player = this.bot!.players[task.targetPlayer];
@@ -1236,13 +1240,22 @@ export class BotInstance extends EventEmitter {
     await this.moveTo(playerPos.x, playerPos.y, playerPos.z);
     await this.sleep(500);
 
-    this.updateTaskStep(task.id, `Dropping items to ${task.targetPlayer}...`);
+    await this.updateTaskStep(task.id, `Dropping items to ${task.targetPlayer}...`);
 
-    // Drop all items in inventory
+    // Only drop the collected task items (not bot's tools/food/etc)
+    const itemsToDeliver = new Set(items.keys());
     for (const item of this.bot!.inventory.items()) {
       if (this.taskCancelled) break;
-      await this.bot!.tossStack(item);
-      await this.sleep(100);
+      // Only toss items that were part of the task collection
+      if (itemsToDeliver.has(item.name)) {
+        const neededCount = items.get(item.name) || 0;
+        if (neededCount > 0) {
+          const tossCount = Math.min(item.count, neededCount);
+          await this.bot!.toss(item.type, null, tossCount);
+          items.set(item.name, neededCount - tossCount);
+          await this.sleep(100);
+        }
+      }
     }
   }
 
@@ -1251,7 +1264,7 @@ export class BotInstance extends EventEmitter {
       throw new Error('No delivery location specified');
     }
 
-    this.updateTaskStep(task.id, 'Walking to delivery location...');
+    await this.updateTaskStep(task.id, 'Walking to delivery location...');
 
     // Move to delivery location
     await this.moveTo(task.deliveryX, task.deliveryY, task.deliveryZ);
@@ -1263,7 +1276,7 @@ export class BotInstance extends EventEmitter {
       throw new Error('No empty chest found within 4 blocks of delivery location');
     }
 
-    this.updateTaskStep(task.id, 'Depositing items...');
+    await this.updateTaskStep(task.id, 'Depositing items...');
 
     await this.moveToBlock(chestBlock.position.x, chestBlock.position.y, chestBlock.position.z);
     await this.sleep(200);
@@ -1271,14 +1284,25 @@ export class BotInstance extends EventEmitter {
     const chest = await this.bot!.openContainer(chestBlock);
     await this.sleep(100);
 
-    // Deposit all items
+    // Only deposit the collected task items (not bot's tools/food/etc)
+    const itemsToDeliver = new Set(items.keys());
     for (const item of this.bot!.inventory.items()) {
       if (this.taskCancelled) break;
-      try {
-        await chest.deposit(item.type, null, item.count);
-        await this.sleep(100);
-      } catch (error) {
-        console.error(`Failed to deposit ${item.name}:`, error);
+      // Only deposit items that were part of the task collection
+      if (itemsToDeliver.has(item.name)) {
+        const neededCount = items.get(item.name) || 0;
+        if (neededCount > 0) {
+          const depositCount = Math.min(item.count, neededCount);
+          try {
+            await chest.deposit(item.type, null, depositCount);
+            items.set(item.name, neededCount - depositCount);
+            await this.sleep(100);
+          } catch (error) {
+            console.error(`Failed to deposit ${item.name}:`, error);
+          }
+        }
+      }
+    }
       }
     }
 
@@ -1320,7 +1344,7 @@ export class BotInstance extends EventEmitter {
       if (this.taskCancelled) break;
 
       const shulkerItem = shulkerItems[shulkerIndex];
-      this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length} for packing...`);
+      await this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length} for packing...`);
       
       // Go get the empty shulker
       await this.moveToBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
@@ -1391,7 +1415,7 @@ export class BotInstance extends EventEmitter {
         const shulkerContainer = await this.bot!.openContainer(placedShulker);
         await this.sleep(100);
 
-        this.updateTaskStep(task.id, `Packing items into shulker ${shulkerIndex + 1}...`);
+        await this.updateTaskStep(task.id, `Packing items into shulker ${shulkerIndex + 1}...`);
 
         // Deposit items into shulker (max 27 slots)
         const itemsToPack = this.bot!.inventory.items().filter(i => !i.name.includes('shulker_box'));

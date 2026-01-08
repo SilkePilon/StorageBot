@@ -45,9 +45,12 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 const gracefulShutdown = async (signal: string) => {
   console.log(`Received ${signal}. Shutting down gracefully...`);
   
-  // Stop accepting new connections
-  httpServer.close(() => {
-    console.log('HTTP server closed');
+  // Stop accepting new connections and wait for it to close
+  await new Promise<void>((resolve) => {
+    httpServer.close(() => {
+      console.log('HTTP server closed');
+      resolve();
+    });
   });
   
   await BotManager.getInstance().shutdown();

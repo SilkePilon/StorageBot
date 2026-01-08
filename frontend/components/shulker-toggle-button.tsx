@@ -93,6 +93,16 @@ export function ShulkerToggleButton({ isOpen, onToggle, disabled }: ShulkerToggl
     loadGif();
   }, []);
   
+  // Sync currentFrame with isOpen prop when frames load or isOpen changes externally
+  useEffect(() => {
+    if (frames.length > 0 && !isAnimating) {
+      const targetFrame = isOpen ? FRAME_OPEN : 0;
+      if (currentFrame !== targetFrame) {
+        setCurrentFrame(targetFrame);
+      }
+    }
+  }, [frames.length, isOpen, isAnimating]);
+  
   // Draw current frame
   useEffect(() => {
     if (frames.length > 0 && canvasRef.current && frames[currentFrame]) {

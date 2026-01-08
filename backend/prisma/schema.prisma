@@ -47,6 +47,7 @@ model Bot {
   updatedAt       DateTime @updatedAt
 
   storageSystems  StorageSystem[]
+  requestTasks    RequestTask[]
 
   @@index([userId])
   @@index([isPublic])
@@ -72,7 +73,8 @@ model StorageSystem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  chests    Chest[]
+  chests       Chest[]
+  requestTasks RequestTask[]
 
   @@index([botId])
 }
@@ -171,7 +173,9 @@ enum PackingMode {
 model RequestTask {
   id              String       @id @default(uuid())
   botId           String
+  bot             Bot          @relation(fields: [botId], references: [id], onDelete: Cascade)
   storageSystemId String
+  storageSystem   StorageSystem @relation(fields: [storageSystemId], references: [id], onDelete: Cascade)
   
   // Task metadata
   name            String?      // Optional user-friendly name

@@ -371,14 +371,22 @@ router.patch('/:taskId/items/:itemId/decision', async (req: AuthRequest, res) =>
       return;
     }
 
-    // Update the item decision
-    await prisma.requestItem.update({
-      where: { id: req.params.itemId },
+    // Update the item decision (include taskId to prevent IDOR)
+    const updatedItem = await prisma.requestItem.updateMany({
+      where: { 
+        id: req.params.itemId,
+        taskId: req.params.taskId,
+      },
       data: {
         userDecision: decision,
         status: decision === 'skip' ? 'skipped' : 'pending',
       },
     });
+    
+    if (updatedItem.count === 0) {
+      res.status(404).json({ error: 'Item not found in this task' });
+      return;
+    }
 
     // Check if all partial items now have decisions
     const remainingUndecided = await prisma.requestItem.count({
