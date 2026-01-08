@@ -1,4 +1,4 @@
-# 📦 StorageBot
+# StorageBot
 
 <div align="center">
 
@@ -9,32 +9,47 @@
 
 **A Minecraft storage management bot with a modern web interface**
 
-*Automatically index, search, and retrieve items from your storage systems*
+_Automatically index, search, and retrieve items from your storage systems_
 
 </div>
 
 ---
 
-> ⚠️ **Early Development Notice**
-> 
+> **Early Development Notice**
+>
 > StorageBot is currently in **early development**. While core features are functional, you may encounter bugs or incomplete functionality. Your feedback is invaluable!
-> 
+>
 > **Found a bug or have a feature request?** Please open an issue on the [GitHub Issues](https://github.com/SilkePilon/StorageBot/issues) page. We appreciate all contributions and feedback from the community!
+>
+> ### Roadmap
+>
+> - [X] Automated Storage Indexing
+> - [X] Smart Search
+> - [X] Real-time Dashboard
+> - [X] Task System
+> - [X] Multiple Delivery Methods
+> - [X] Microsoft Authentication
+> - [X] Multi-user Support
+> - [X] Real-time Updates via WebSocket
+> - [ ] Random item sorting across storage chests
+> - [ ] Category-based item sorting
+> - [ ] Litematica schematic upload support
+> - [ ] Automatic material gathering (from storage) for schematics
 
 ---
 
-## ✨ Features
+## Features
 
-- 🤖 **Automated Storage Indexing** - Bot automatically scans and catalogs all chests in your storage area
-- 🔍 **Smart Search** - Quickly find any item across hundreds of chests
-- 📊 **Real-time Dashboard** - Modern web UI showing storage statistics and item counts
-- 📋 **Task System** - Request items and the bot will collect and deliver them
-- 🎮 **Multiple Delivery Methods** - Direct drop, chest deposit, or shulker box packing
-- 🔐 **Microsoft Authentication** - Secure MSA login with device code flow
-- 👥 **Multi-user Support** - Multiple users can manage their own bots
-- 🔄 **Real-time Updates** - Live status updates via WebSocket
+- **Automated Storage Indexing** - Bot automatically scans and catalogs all chests in your storage area
+- **Smart Search** - Quickly find any item across hundreds of chests
+- **Real-time Dashboard** - Modern web UI showing storage statistics and item counts
+- **Task System** - Request items and the bot will collect and deliver them
+- **Multiple Delivery Methods** - Direct drop, chest deposit, or shulker box packing
+- **Microsoft Authentication** - Secure MSA login with device code flow
+- **Multi-user Support** - Multiple users can manage their own bots
+- **Real-time Updates** - Live status updates via WebSocket
 
-## 📋 Prerequisites
+## Prerequisites
 
 Before you begin, ensure you have the following installed:
 
@@ -43,7 +58,7 @@ Before you begin, ensure you have the following installed:
 - A Minecraft account (Java Edition)
 - A Minecraft server to connect to
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Clone the Repository
 
@@ -115,7 +130,7 @@ Open your browser and navigate to:
 http://localhost:3000
 ```
 
-## 📖 How to Use
+## How to Use
 
 ### First Time Setup
 
@@ -155,7 +170,7 @@ Storage contents change over time. To update the index:
 2. Click "Re-index Storage"
 3. Wait for the indexing to complete
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 StorageBot/
@@ -177,35 +192,37 @@ StorageBot/
 └── docker-compose.yml    # Database setup
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Backend Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Required |
-| `JWT_SECRET` | Secret key for JWT tokens | Required |
-| `PORT` | API server port | `3001` |
-| `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
-| `NODE_ENV` | Environment mode | `development` |
+| Variable         | Description                  | Default                   |
+| ---------------- | ---------------------------- | ------------------------- |
+| `DATABASE_URL` | PostgreSQL connection string | Required                  |
+| `JWT_SECRET`   | Secret key for JWT tokens    | Required                  |
+| `PORT`         | API server port              | `3001`                  |
+| `FRONTEND_URL` | Frontend URL for CORS        | `http://localhost:3000` |
+| `NODE_ENV`     | Environment mode             | `development`           |
 
 ### Frontend Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
+| Variable                | Description     | Default                   |
+| ----------------------- | --------------- | ------------------------- |
 | `NEXT_PUBLIC_API_URL` | Backend API URL | `http://localhost:3001` |
 
-## 🛠️ Development
+## Development
 
 ### Running in Development Mode
 
 **Backend:**
+
 ```bash
 cd backend
 npm run dev
 ```
 
 **Frontend:**
+
 ```bash
 cd frontend
 npm run dev
@@ -224,7 +241,7 @@ npm run db:migrate
 npm run db:push
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Bot won't connect to server
 
@@ -250,7 +267,7 @@ npm run db:push
 - Check the database container: `docker-compose logs postgres`
 - Ensure `DATABASE_URL` in `.env` matches the docker-compose configuration
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Since this project is in early development, there are many ways to help:
 
@@ -261,11 +278,11 @@ Contributions are welcome! Since this project is in early development, there are
 
 Please open an issue on our [GitHub Issues](https://github.com/SilkePilon/StorageBot/issues) page for any bugs or feature requests.
 
-## 📜 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Mineflayer](https://github.com/PrismarineJS/mineflayer) - Minecraft bot framework
 - [shadcn/ui](https://ui.shadcn.com/) - Beautiful UI components
@@ -276,7 +293,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Made with ❤️ for the Minecraft community**
+**Made with love for the Minecraft community**
 
 [Report Bug](https://github.com/SilkePilon/StorageBot/issues) · [Request Feature](https://github.com/SilkePilon/StorageBot/issues)
 
