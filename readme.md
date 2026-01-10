@@ -15,26 +15,27 @@ _Automatically index, search, and retrieve items from your storage systems_
 
 ---
 
-> **Early Development Notice**
->
+> [!NOTE]
 > StorageBot is currently in **early development**. While core features are functional, you may encounter bugs or incomplete functionality. Your feedback is invaluable!
->
-> **Found a bug or have a feature request?** Please open an issue on the [GitHub Issues](https://github.com/SilkePilon/StorageBot/issues) page. We appreciate all contributions and feedback from the community!
->
-> ### Roadmap
->
-> - [x] Automated Storage Indexing
-> - [x] Smart Search
-> - [x] Real-time Dashboard
-> - [x] Task System
-> - [x] Multiple Delivery Methods
-> - [x] Microsoft Authentication
-> - [x] Multi-user Support
-> - [x] Real-time Updates via WebSocket
-> - [ ] Random item sorting across storage chests
-> - [ ] Category-based item sorting
-> - [ ] Litematica schematic upload support
-> - [ ] Automatic material gathering (from storage) for schematics
+
+> [!TIP] > **Found a bug or have a feature request?** Please open an issue on the [GitHub Issues](https://github.com/SilkePilon/StorageBot/issues) page. We appreciate all contributions and feedback from the community!
+
+---
+
+### Roadmap
+
+- [x] Automated Storage Indexing
+- [x] Smart Search
+- [x] Real-time Dashboard
+- [x] Task System
+- [x] Multiple Delivery Methods
+- [x] Microsoft Authentication
+- [x] Multi-user Support
+- [x] Real-time Updates via WebSocket
+- [ ] Random item sorting across storage chests
+- [ ] Category-based item sorting
+- [ ] Litematica schematic upload support
+- [ ] Automatic material gathering (from storage) for schematics
 
 ---
 
@@ -102,7 +103,8 @@ FRONTEND_URL="http://localhost:3000"
 NEXT_PUBLIC_API_URL="http://localhost:3001"
 ```
 
-> ⚠️ **Important:** In production, always use a strong, unique `JWT_SECRET` and `POSTGRES_PASSWORD`!
+> [!IMPORTANT]
+> In production, always use a strong, unique `JWT_SECRET` and `POSTGRES_PASSWORD`!
 
 #### 3. Start All Services
 
@@ -140,10 +142,13 @@ docker-compose down
 # Rebuild after code changes
 docker-compose up -d --build
 
-# Reset database (WARNING: deletes all data)
+# Reset database
 docker-compose down -v
 docker-compose up -d
 ```
+
+> [!CAUTION]
+> Running `docker-compose down -v` will delete all data including your database!
 
 ---
 
@@ -188,7 +193,8 @@ FRONTEND_URL="http://localhost:3000"
 NODE_ENV="development"
 ```
 
-> ⚠️ **Important:** In production, always use a strong, unique `JWT_SECRET`!
+> [!IMPORTANT]
+> In production, always use a strong, unique `JWT_SECRET`!
 
 ```bash
 # Generate Prisma client and push schema to database
