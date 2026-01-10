@@ -229,6 +229,36 @@ router.post('/:id/index', async (req: AuthRequest, res) => {
   }
 });
 
+// Stop indexing storage
+router.post('/:id/stop-index', async (req: AuthRequest, res) => {
+  try {
+    const storage = await prisma.storageSystem.findUnique({
+      where: { id: req.params.id },
+      include: {
+        bot: {
+          select: { id: true, userId: true },
+        },
+      },
+    });
+
+    if (!storage || storage.bot.userId !== req.userId) {
+      res.status(404).json({ error: 'Storage system not found' });
+      return;
+    }
+
+    const stopped = BotManager.getInstance().stopIndexing(storage.bot.id);
+
+    if (stopped) {
+      res.json({ status: 'indexing_stopped' });
+    } else {
+      res.status(400).json({ error: 'Bot is not currently indexing' });
+    }
+  } catch (error) {
+    console.error('Stop indexing error:', error);
+    res.status(500).json({ error: 'Failed to stop indexing' });
+  }
+});
+
 // Get items in storage (with search)
 router.get('/:id/items', async (req: AuthRequest, res) => {
   try {

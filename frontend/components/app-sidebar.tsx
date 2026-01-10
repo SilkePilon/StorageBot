@@ -195,14 +195,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 >
                   <Avatar className="h-8 w-8 rounded-lg">
                     <AvatarFallback className="rounded-lg">
-                      {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "U"}
+                      {user?.username?.slice(0, 2).toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{user?.name || "User"}</span>
-                    <span className="text-muted-foreground truncate text-xs">
-                      {user?.email}
-                    </span>
+                    <span className="truncate font-medium">{user?.username || "User"}</span>
                   </div>
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
@@ -216,14 +213,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                     <Avatar className="h-8 w-8 rounded-lg">
                       <AvatarFallback className="rounded-lg">
-                        {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "U"}
+                        {user?.username?.slice(0, 2).toUpperCase() || "U"}
                       </AvatarFallback>
                     </Avatar>
                     <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-medium">{user?.name || "User"}</span>
-                      <span className="text-muted-foreground truncate text-xs">
-                        {user?.email}
-                      </span>
+                      <span className="truncate font-medium">{user?.username || "User"}</span>
                     </div>
                   </div>
                 </DropdownMenuLabel>

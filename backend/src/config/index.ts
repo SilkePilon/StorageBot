@@ -1,4 +1,7 @@
 import dotenv from 'dotenv';
+
+// Load .env file if it exists (for local development)
+// In Docker, environment variables are passed directly via docker-compose
 dotenv.config();
 
 const nodeEnv = process.env.NODE_ENV || 'development';

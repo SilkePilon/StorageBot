@@ -10,6 +10,7 @@ const { GoalBlock, GoalNear, GoalGetToBlock } = goals;
 export interface BotStatus {
   connected: boolean;
   spawned: boolean;
+  isIndexing?: boolean;
   health?: number;
   food?: number;
   position?: { x: number; y: number; z: number };
@@ -36,6 +37,8 @@ export class BotInstance extends EventEmitter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 3;
   private isIndexing = false;
+  private indexingCancelled = false;
+  private currentIndexingStorageId: string | null = null;
   private currentTaskId: string | null = null;
   private taskCancelled = false;
   private lastMoveEmit: number = 0;
@@ -65,12 +68,13 @@ export class BotInstance extends EventEmitter {
 
   getStatus(): BotStatus {
     if (!this.bot) {
-      return { connected: false, spawned: false };
+      return { connected: false, spawned: false, isIndexing: false };
     }
 
     return {
       connected: this.status.connected,
       spawned: this.status.spawned,
+      isIndexing: this.isIndexing,
       health: this.bot.health,
       food: this.bot.food,
       position: this.bot.entity?.position
@@ -420,14 +424,9 @@ export class BotInstance extends EventEmitter {
       // Check if this is a shulker box (any color variant)
       if (item.name.includes('shulker_box')) {
         baseItem.isShulkerBox = true;
-        
-        // Parse shulker box contents - supports both new (1.20.5+) and legacy formats
         const contents = this.parseShulkerContents(item);
         if (contents.length > 0) {
           baseItem.shulkerContents = contents;
-          console.log(`[Shulker] ${item.name} has ${contents.length} item types`);
-        } else {
-          console.log(`[Shulker] ${item.name} is empty`);
         }
       }
 
@@ -474,9 +473,6 @@ export class BotInstance extends EventEmitter {
             const registryItem = this.bot.registry.items[numericId];
             itemId = registryItem.name || itemId;
             itemName = registryItem.displayName || this.formatItemName(itemId);
-          } else {
-            // Fallback: format the numeric ID as best we can
-            console.log(`[Shulker] Could not resolve item ID ${numericId} in registry`);
           }
           
           contents.push({
@@ -565,6 +561,8 @@ export class BotInstance extends EventEmitter {
     }
 
     this.isIndexing = true;
+    this.indexingCancelled = false;
+    this.currentIndexingStorageId = storageId;
     this.status.currentAction = 'Indexing storage...';
     this.emitStatus();
 
@@ -608,6 +606,12 @@ export class BotInstance extends EventEmitter {
       // Index each chest - dynamically picking the nearest one each time
       let indexed = 0;
       while (remainingChests.length > 0) {
+        // Check if indexing was cancelled
+        if (this.indexingCancelled) {
+          console.log(`[Bot ${this.id}] Indexing stopped by user at ${indexed}/${totalChests} chests`);
+          break;
+        }
+
         // Get bot's CURRENT position and find nearest unvisited chest
         const botPos = this.bot!.entity.position;
         let nearestIdx = 0;
@@ -700,21 +704,26 @@ export class BotInstance extends EventEmitter {
         data: {
           isIndexed: true,
           lastIndexed: new Date(),
-          indexProgress: 100,
+          indexProgress: this.indexingCancelled ? Math.floor(5 + (indexed / totalChests) * 90) : 100,
         },
       });
+
+      const finalStatus = this.indexingCancelled 
+        ? `Indexing stopped (${indexed}/${totalChests} chests indexed)`
+        : 'Indexing complete';
 
       emitToBot(this.id, 'storage:indexProgress', {
         botId: this.id,
         storageId,
-        progress: 100,
-        status: 'Indexing complete',
+        progress: this.indexingCancelled ? Math.floor(5 + (indexed / totalChests) * 90) : 100,
+        status: finalStatus,
       });
 
       emitToBot(this.id, 'storage:indexComplete', {
         botId: this.id,
         storageId,
-        totalChests,
+        totalChests: indexed,
+        wasStopped: this.indexingCancelled,
       });
 
       // Final stats update
@@ -729,13 +738,150 @@ export class BotInstance extends EventEmitter {
       throw error;
     } finally {
       this.isIndexing = false;
+      this.currentIndexingStorageId = null;
       this.status.currentAction = undefined;
       this.emitStatus();
     }
   }
 
+  stopIndexing(): boolean {
+    if (!this.isIndexing) {
+      return false;
+    }
+    console.log(`[Bot ${this.id}] Stopping indexing...`);
+    this.indexingCancelled = true;
+    return true;
+  }
+
+  getCurrentIndexingStorageId(): string | null {
+    return this.currentIndexingStorageId;
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Look at a position with force=true and verify the look completed.
+   * Retries if the look didn't register properly.
+   */
+  private async lookAtWithRetry(position: Vec3, maxRetries: number = 3): Promise<boolean> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const beforeYaw = this.bot!.entity.yaw;
+      const beforePitch = this.bot!.entity.pitch;
+      
+      await this.bot!.lookAt(position, true);
+      await this.bot!.waitForTicks(3);
+      
+      const afterYaw = this.bot!.entity.yaw;
+      const afterPitch = this.bot!.entity.pitch;
+      
+      const yawChanged = Math.abs(beforeYaw - afterYaw) > 0.01 || Math.abs(afterYaw) < 0.01;
+      const pitchChanged = Math.abs(beforePitch - afterPitch) > 0.01;
+      
+      if (yawChanged || pitchChanged || attempt > 1) {
+        return true;
+      }
+      
+      await this.sleep(50);
+    }
+    return false;
+  }
+
+  /**
+   * Find shulkers in inventory that contain any of the requested items.
+   */
+  private findShulkersContainingItems(requestedItems: Map<string, number>): any[] {
+    if (!this.bot) return [];
+    
+    const requestedItemNames = new Set(requestedItems.keys());
+    const result: any[] = [];
+    
+    const shulkersInInventory = this.getInventoryItems().filter((slot: any) => 
+      slot.name.includes('shulker_box')
+    );
+    
+    for (const shulker of shulkersInInventory) {
+      const contents = this.parseShulkerContents(shulker);
+      
+      // If no specific items requested, any shulker with contents qualifies
+      if (requestedItemNames.size === 0) {
+        if (contents.length > 0) {
+          result.push(shulker);
+        }
+        continue;
+      }
+      
+      // Check if this shulker contains any of the requested items
+      const hasRequestedItem = contents.some(content => 
+        requestedItemNames.has(content.itemId) || 
+        requestedItemNames.has(`minecraft:${content.itemId}`)
+      );
+      
+      if (hasRequestedItem) {
+        result.push(shulker);
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * Wait for a dropped item entity to appear nearby and collect it.
+   */
+  private async collectNearbyDroppedItem(itemNameContains: string, timeoutMs: number = 5000): Promise<boolean> {
+    const startTime = Date.now();
+    const botPos = this.bot!.entity.position;
+    
+    const findDroppedItems = () => {
+      return Object.values(this.bot!.entities).filter((e: any) => {
+        const isItemEntity = 
+          e.name === 'item' || 
+          e.name === 'item_stack' ||
+          e.entityType === 'item' ||
+          (e.type === 'object' && e.objectType === 'Item') ||
+          e.mobType === 'Item';
+        
+        if (!isItemEntity) return false;
+        return e.position.distanceTo(botPos) < 8;
+      });
+    };
+    
+    while (Date.now() - startTime < timeoutMs) {
+      // Check if already in inventory
+      if (this.findShulkerInInventory()) return true;
+      
+      const nearbyItems = findDroppedItems();
+      
+      if (nearbyItems.length > 0) {
+        const nearest = nearbyItems.reduce((a: any, b: any) => 
+          a.position.distanceTo(botPos) < b.position.distanceTo(botPos) ? a : b
+        ) as any;
+        
+        const distToItem = nearest.position.distanceTo(this.bot!.entity.position);
+        
+        if (distToItem > 1.5) {
+          try {
+            const { GoalNear } = require('mineflayer-pathfinder').goals;
+            await this.bot!.pathfinder.goto(new GoalNear(nearest.position.x, nearest.position.y, nearest.position.z, 1));
+          } catch {
+            await this.bot!.lookAt(nearest.position, true);
+            this.bot!.setControlState('forward', true);
+            await this.sleep(500);
+            this.bot!.setControlState('forward', false);
+          }
+        } else {
+          await this.bot!.lookAt(nearest.position, true);
+        }
+        
+        await this.sleep(300);
+        if (this.findShulkerInInventory()) return true;
+      }
+      
+      await this.sleep(100);
+    }
+    
+    return !!this.findShulkerInInventory();
   }
 
   setMicrosoftEmail(email: string): void {
@@ -747,6 +893,29 @@ export class BotInstance extends EventEmitter {
   }
 
   // ============ TASK EXECUTION ============
+
+  /**
+   * Get all non-null items from inventory slots
+   */
+  private getInventoryItems(): any[] {
+    return this.bot!.inventory.slots.filter((s: any) => s !== null);
+  }
+
+  /**
+   * Count total of a specific item in inventory
+   */
+  private countItemInInventory(itemName: string): number {
+    return this.getInventoryItems()
+      .filter((s: any) => s.name === itemName)
+      .reduce((sum: number, s: any) => sum + s.count, 0);
+  }
+
+  /**
+   * Find a shulker box in inventory
+   */
+  private findShulkerInInventory(): any | null {
+    return this.bot!.inventory.slots.find((s: any) => s && s.name.includes('shulker_box')) || null;
+  }
 
   cancelCurrentTask(taskId: string): void {
     if (this.currentTaskId === taskId) {
@@ -762,20 +931,11 @@ export class BotInstance extends EventEmitter {
     this.currentTaskId = task.id;
     this.taskCancelled = false;
 
-    console.log(`[Task ${task.id}] Executing task with ${task.items?.length || 0} items, deliveryMethod: ${task.deliveryMethod}`);
-    console.log(`[Task ${task.id}] Items:`, JSON.stringify(task.items?.map((i: any) => ({ 
-      id: i.id, 
-      itemId: i.itemId, 
-      status: i.status, 
-      sourceLocationsCount: i.sourceLocations?.length,
-      requestedCount: i.requestedCount 
-    })), null, 2));
+    console.log(`[Task ${task.id}] Executing: ${task.items?.length || 0} items, method: ${task.deliveryMethod}`);
 
     try {
       // Always collect items first (handles both direct chest items AND items from inside shulkers)
       const collectedItems = await this.collectTaskItems(task);
-
-      console.log(`[Task ${task.id}] Collected items:`, Array.from(collectedItems.entries()));
 
       if (this.taskCancelled) {
         throw new Error('Task cancelled');
@@ -783,8 +943,7 @@ export class BotInstance extends EventEmitter {
 
       // Check if we collected anything
       const totalCollected = Array.from(collectedItems.values()).reduce((sum, count) => sum + count, 0);
-      
-      console.log(`[Task ${task.id}] Total collected: ${totalCollected}`);
+      console.log(`[Task ${task.id}] Collected ${totalCollected} items total`);
       
       if (totalCollected === 0) {
         // No items were collected - fail the task
@@ -804,14 +963,22 @@ export class BotInstance extends EventEmitter {
           await this.deliverToChest(task, collectedItems);
           break;
         case 'SHULKER_DROP':
-          // Pack collected items into selected shulkers, then deliver to player
           await this.packItemsIntoShulkers(task, collectedItems);
-          await this.deliverToPlayer(task, collectedItems);
           break;
         case 'SHULKER_CHEST':
-          // Pack collected items into selected shulkers, then deliver to chest
           await this.packItemsIntoShulkers(task, collectedItems);
-          await this.deliverToChest(task, collectedItems);
+          // Deliver packed shulkers to chest
+          const shulkersForChest = this.findShulkersContainingItems(collectedItems);
+          if (shulkersForChest.length === 0) {
+            shulkersForChest.push(...this.getInventoryItems().filter((s: any) => s.name.includes('shulker_box')));
+          }
+          if (shulkersForChest.length > 0) {
+            const shulkerChestMap = new Map<string, number>();
+            for (const s of shulkersForChest) {
+              shulkerChestMap.set(s.name, (shulkerChestMap.get(s.name) || 0) + s.count);
+            }
+            await this.deliverToChest(task, shulkerChestMap);
+          }
           break;
         default:
           throw new Error(`Unknown delivery method: ${task.deliveryMethod}`);
@@ -827,19 +994,12 @@ export class BotInstance extends EventEmitter {
   private async collectTaskItems(task: any): Promise<Map<string, number>> {
     const collected = new Map<string, number>();
 
-    console.log(`[Task ${task.id}] Starting item collection for ${task.items.length} item types`);
-
-    // Build a map of all items we need to collect, keyed by item.id
+    // Build a map of all items we need to collect
     const itemsNeeded = new Map<string, { item: any; remaining: number }>();
     for (const item of task.items) {
       if (item.status === 'skipped') continue;
       const locations = item.sourceLocations as any[];
-      console.log(`[Task ${task.id}] Item ${item.itemName}: ${locations?.length || 0} source locations, fromShulker in any: ${locations?.some((l: any) => l.fromShulker)}`);
-      
-      if (!locations || locations.length === 0) {
-        console.log(`[Task ${task.id}] WARNING: No source locations for item ${item.itemName}`);
-        continue;
-      }
+      if (!locations || locations.length === 0) continue;
       
       const remaining = item.userDecision === 'take_available'
         ? Math.min(item.requestedCount, locations.reduce((sum: number, l: any) => sum + l.available, 0))
@@ -847,11 +1007,7 @@ export class BotInstance extends EventEmitter {
       itemsNeeded.set(item.id, { item, remaining });
     }
 
-    console.log(`[Task ${task.id}] Items needed after filtering: ${itemsNeeded.size}`);
-    if (itemsNeeded.size === 0) {
-      console.log(`[Task ${task.id}] No items needed - returning empty`);
-      return collected;
-    }
+    if (itemsNeeded.size === 0) return collected;
 
     // Separate direct chest items from shulker sources
     interface DirectSlot {
@@ -864,18 +1020,16 @@ export class BotInstance extends EventEmitter {
     }
 
     interface ShulkerSlot {
-      slot: number;           // Shulker's slot in the chest
-      itemId: string;         // The item we want (not the shulker)
+      slot: number;
+      itemId: string;
       requestItemId: string;
-      chestItemId: string;    // Shulker's ChestItem.id
+      chestItemId: string;
       available: number;
       fromShulker: true;
       shulkerContentId: string;
       slotInShulker: number;
-      shulkerItemId: string;  // e.g., "purple_shulker_box"
+      shulkerItemId: string;
     }
-
-    type CollectSlot = DirectSlot | ShulkerSlot;
 
     interface ChestCollectionPlan {
       x: number;
@@ -890,17 +1044,10 @@ export class BotInstance extends EventEmitter {
     for (const item of task.items) {
       if (item.status === 'skipped') continue;
       const locations = item.sourceLocations as any[];
-      
-      if (!locations || locations.length === 0) {
-        console.log(`[Task ${task.id}] Skipping item ${item.itemName} - no locations`);
-        continue;
-      }
+      if (!locations || locations.length === 0) continue;
       
       for (const loc of locations) {
-        if (loc.x === undefined || loc.y === undefined || loc.z === undefined) {
-          console.log(`[Task ${task.id}] Invalid location for ${item.itemName}:`, loc);
-          continue;
-        }
+        if (loc.x === undefined || loc.y === undefined || loc.z === undefined) continue;
         
         const key = `${loc.x},${loc.y},${loc.z}`;
         if (!chestPlans.has(key)) {
@@ -908,7 +1055,6 @@ export class BotInstance extends EventEmitter {
         }
         
         if (loc.fromShulker) {
-          console.log(`[Task ${task.id}] Adding shulker slot for ${item.itemName} at ${key}, shulker slot in chest: ${loc.slot}, item slot in shulker: ${loc.slotInShulker}`);
           chestPlans.get(key)!.shulkerSlots.push({
             slot: loc.slot,
             itemId: item.itemId,
@@ -931,11 +1077,6 @@ export class BotInstance extends EventEmitter {
           });
         }
       }
-    }
-
-    console.log(`[Task ${task.id}] Chest plans: ${chestPlans.size} chests to visit`);
-    for (const [key, plan] of chestPlans) {
-      console.log(`[Task ${task.id}] Chest ${key}: ${plan.directSlots.length} direct, ${plan.shulkerSlots.length} shulker slots`);
     }
 
     // Sort chest plans by distance for optimal pathing
@@ -975,7 +1116,10 @@ export class BotInstance extends EventEmitter {
         const chest = await this.bot!.openContainer(block);
         await this.sleep(100);
 
-        // First, collect direct items from this chest
+        // Track what we're withdrawing from this chest
+        const withdrawnFromChest: { slotInfo: any; actualTake: number }[] = [];
+
+        // Collect direct items from this chest
         for (const slotInfo of directToCollect) {
           if (this.taskCancelled) break;
 
@@ -988,11 +1132,25 @@ export class BotInstance extends EventEmitter {
           const chestItem = chest.containerItems().find((i) => i.slot === slotInfo.slot);
           if (chestItem && chestItem.name === slotInfo.itemId) {
             const actualTake = Math.min(toTake, chestItem.count);
-            await chest.withdraw(chestItem.type, null, actualTake);
-            needed.remaining -= actualTake;
-            collected.set(slotInfo.itemId, (collected.get(slotInfo.itemId) || 0) + actualTake);
+            
+            try {
+              await chest.withdraw(chestItem.type, null, actualTake);
+              withdrawnFromChest.push({ slotInfo, actualTake });
+              needed.remaining -= actualTake;
+              await this.sleep(50);
+            } catch {
+              continue;
+            }
+          }
+        }
 
-            // Update database
+        // Close the chest BEFORE verifying inventory
+        if (shulkerToCollect.length === 0) {
+          chest.close();
+          await this.sleep(300);
+          
+          // Update database and collected counts
+          for (const { slotInfo, actualTake } of withdrawnFromChest) {
             if (slotInfo.chestItemId) {
               const newCount = slotInfo.available - actualTake;
               if (newCount <= 0) {
@@ -1001,27 +1159,41 @@ export class BotInstance extends EventEmitter {
                 await prisma.chestItem.update({ where: { id: slotInfo.chestItemId }, data: { count: newCount } }).catch(() => {});
               }
             }
-
-            await this.updateItemProgress(task.id, slotInfo.requestItemId, slotInfo.itemId, actualTake, needed.remaining, task.storageSystemId);
-            await this.sleep(50);
+            
+            collected.set(slotInfo.itemId, (collected.get(slotInfo.itemId) || 0) + actualTake);
+            await this.updateItemProgress(task.id, slotInfo.requestItemId, slotInfo.itemId, actualTake, itemsNeeded.get(slotInfo.requestItemId)?.remaining || 0, task.storageSystemId);
           }
+          
+          await this.sleep(200);
+          continue;
         }
 
-        // Now handle shulker extractions from this chest
+        // Update DB and collected counts for direct items when shulkers also need processing
+        for (const { slotInfo, actualTake } of withdrawnFromChest) {
+          if (slotInfo.chestItemId) {
+            const newCount = slotInfo.available - actualTake;
+            if (newCount <= 0) {
+              await prisma.chestItem.delete({ where: { id: slotInfo.chestItemId } }).catch(() => {});
+            } else {
+              await prisma.chestItem.update({ where: { id: slotInfo.chestItemId }, data: { count: newCount } }).catch(() => {});
+            }
+          }
+          collected.set(slotInfo.itemId, (collected.get(slotInfo.itemId) || 0) + actualTake);
+          await this.updateItemProgress(task.id, slotInfo.requestItemId, slotInfo.itemId, actualTake, itemsNeeded.get(slotInfo.requestItemId)?.remaining || 0, task.storageSystemId);
+        }
+
         // Group shulker slots by the shulker they're in
         const shulkerGroups = new Map<string, ShulkerSlot[]>();
         for (const slot of shulkerToCollect) {
-          const key = slot.chestItemId;
-          if (!shulkerGroups.has(key)) {
-            shulkerGroups.set(key, []);
+          if (!shulkerGroups.has(slot.chestItemId)) {
+            shulkerGroups.set(slot.chestItemId, []);
           }
-          shulkerGroups.get(key)!.push(slot);
+          shulkerGroups.get(slot.chestItemId)!.push(slot);
         }
 
-        for (const [shulkerChestItemId, slots] of shulkerGroups) {
+        for (const [, slots] of shulkerGroups) {
           if (this.taskCancelled) break;
 
-          // Check if we still need any items from this shulker
           const slotsStillNeeded = slots.filter((s) => {
             const needed = itemsNeeded.get(s.requestItemId);
             return needed && needed.remaining > 0;
@@ -1029,20 +1201,14 @@ export class BotInstance extends EventEmitter {
 
           if (slotsStillNeeded.length === 0) continue;
 
-          // Find and take the shulker from the chest
           const shulkerSlot = slotsStillNeeded[0].slot;
           const shulkerInChest = chest.containerItems().find((i) => 
             i.slot === shulkerSlot && i.name.includes('shulker_box')
           );
 
-          if (!shulkerInChest) {
-            console.log(`[Task ${task.id}] Shulker not found in slot ${shulkerSlot}`);
-            continue;
-          }
+          if (!shulkerInChest) continue;
 
           const shulkerOriginalSlot = shulkerInChest.slot;
-          console.log(`[Task ${task.id}] Taking shulker from slot ${shulkerOriginalSlot} to extract items`);
-
           await chest.withdraw(shulkerInChest.type, null, 1);
           await this.sleep(100);
           chest.close();
@@ -1051,10 +1217,8 @@ export class BotInstance extends EventEmitter {
           // Place the shulker
           const placePos = await this.findPlaceableSpot();
           if (!placePos) {
-            console.log(`[Task ${task.id}] No place to put shulker, skipping`);
-            // Put shulker back
             const chestAgain = await this.bot!.openContainer(block);
-            const shulkerInv = this.bot!.inventory.items().find((i) => i.name.includes('shulker_box'));
+            const shulkerInv = this.findShulkerInInventory();
             if (shulkerInv) {
               await chestAgain.deposit(shulkerInv.type, null, 1);
             }
@@ -1062,7 +1226,7 @@ export class BotInstance extends EventEmitter {
             continue;
           }
 
-          const shulkerInInventory = this.bot!.inventory.items().find((i) => i.name.includes('shulker_box'));
+          const shulkerInInventory = this.findShulkerInInventory();
           if (!shulkerInInventory) continue;
 
           await this.bot!.equip(shulkerInInventory, 'hand');
@@ -1073,15 +1237,14 @@ export class BotInstance extends EventEmitter {
             try {
               await this.bot!.placeBlock(referenceBlock, new Vec3(0, 1, 0));
               await this.sleep(400);
-            } catch (placeErr) {
-              console.log(`[Task ${task.id}] Failed to place shulker:`, placeErr);
+            } catch {
               continue;
             }
           }
 
           // Open the placed shulker and take items
           const placedShulker = this.bot!.blockAt(placePos);
-          if (placedShulker && placedShulker.name.includes('shulker_box')) {
+          if (placedShulker?.name.includes('shulker_box')) {
             const shulkerContainer = await this.bot!.openContainer(placedShulker);
             await this.sleep(100);
 
@@ -1101,7 +1264,6 @@ export class BotInstance extends EventEmitter {
                 needed.remaining -= actualTake;
                 collected.set(slotInfo.itemId, (collected.get(slotInfo.itemId) || 0) + actualTake);
 
-                // Update ShulkerContent in database
                 if (slotInfo.shulkerContentId) {
                   const newCount = slotInfo.available - actualTake;
                   if (newCount <= 0) {
@@ -1116,55 +1278,36 @@ export class BotInstance extends EventEmitter {
               }
             }
 
-            await this.sleep(100);
             shulkerContainer.close();
             await this.sleep(300);
             
-            // Break the shulker to pick it up (inside the if block where placedShulker is validated)
+            // Break shulker and collect it
             await this.bot!.dig(placedShulker);
-            await this.sleep(500);
+            await this.collectNearbyDroppedItem('shulker_box', 3000);
+            
+            const shulkerInInv = this.findShulkerInInventory();
+            if (!shulkerInInv) {
+              await this.sleep(500);
+              continue;
+            }
 
-            // Put the shulker back in the chest
+            // Return shulker to chest
             await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
             await this.sleep(200);
 
             const chestAgain = await this.bot!.openContainer(block);
             await this.sleep(100);
 
-            const shulkerToReturn = this.bot!.inventory.items().find((i) => i.name.includes('shulker_box'));
+            const shulkerToReturn = this.findShulkerInInventory();
             if (shulkerToReturn) {
-              // Try to put it in the original slot first
-              const originalSlotItem = chestAgain.containerItems().find((i) => i.slot === shulkerOriginalSlot);
-              
-              if (!originalSlotItem) {
-                // Original slot is empty, deposit there
-                // Note: mineflayer deposit doesn't let you specify slot, so we just deposit
-                await chestAgain.deposit(shulkerToReturn.type, null, 1);
-              } else {
-                // Original slot is taken, find next available
-                await chestAgain.deposit(shulkerToReturn.type, null, 1);
-              }
-
-              // Update the shulker's slot in the database if it moved
-              const newSlot = chestAgain.containerItems().find((i) => i.name.includes('shulker_box') && i.type === shulkerToReturn.type);
-              if (newSlot && newSlot.slot !== shulkerOriginalSlot) {
-                await prisma.chestItem.update({
-                  where: { id: shulkerChestItemId },
-                  data: { slot: newSlot.slot },
-                }).catch(() => {});
-              }
+              await chestAgain.deposit(shulkerToReturn.type, null, 1);
+              await this.sleep(100);
             }
 
-            await this.sleep(100);
             chestAgain.close();
             await this.sleep(100);
 
-            // Emit storage update
-            emitToBot(this.id, 'storage:itemUpdated', {
-              storageId: task.storageSystemId,
-            });
-          } else {
-            console.log(`[Task ${task.id}] Failed to find placed shulker at ${placePos.x}, ${placePos.y}, ${placePos.z}`);
+            emitToBot(this.id, 'storage:itemUpdated', { storageId: task.storageSystemId });
           }
         }
 
@@ -1218,33 +1361,41 @@ export class BotInstance extends EventEmitter {
 
     await this.updateTaskStep(task.id, `Walking to ${task.targetPlayer}...`);
 
-    // Find the player
     const player = this.bot!.players[task.targetPlayer];
     if (!player || !player.entity) {
       throw new Error(`Player ${task.targetPlayer} not found or not nearby`);
     }
 
-    // Walk to player
-    const playerPos = player.entity.position;
-    await this.moveTo(playerPos.x, playerPos.y, playerPos.z);
+    await this.moveTo(player.entity.position.x, player.entity.position.y, player.entity.position.z);
     await this.sleep(500);
 
     await this.updateTaskStep(task.id, `Dropping items to ${task.targetPlayer}...`);
 
-    // Only drop the collected task items (not bot's tools/food/etc)
     const itemsToDeliver = new Set(items.keys());
-    for (const item of this.bot!.inventory.items()) {
+    
+    for (const item of this.getInventoryItems()) {
       if (this.taskCancelled) break;
-      // Only toss items that were part of the task collection
-      if (itemsToDeliver.has(item.name)) {
-        const neededCount = items.get(item.name) || 0;
-        if (neededCount > 0) {
-          const tossCount = Math.min(item.count, neededCount);
-          await this.bot!.toss(item.type, null, tossCount);
-          items.set(item.name, neededCount - tossCount);
-          await this.sleep(100);
-        }
+      
+      if (!itemsToDeliver.has(item.name)) continue;
+      
+      const neededCount = items.get(item.name) || 0;
+      if (neededCount <= 0) continue;
+      
+      const tossCount = Math.min(item.count, neededCount);
+      
+      // Look at player before tossing
+      const targetPlayer = this.bot!.players[task.targetPlayer];
+      if (targetPlayer?.entity) {
+        await this.lookAtWithRetry(targetPlayer.entity.position, 3);
       }
+      
+      try {
+        await this.bot!.toss(item.type, null, tossCount);
+        items.set(item.name, neededCount - tossCount);
+      } catch (e) {
+        console.error(`[Task ${task.id}] Failed to toss ${item.name}:`, e);
+      }
+      await this.sleep(150);
     }
   }
 
@@ -1254,46 +1405,40 @@ export class BotInstance extends EventEmitter {
     }
 
     await this.updateTaskStep(task.id, 'Walking to delivery location...');
-
-    // Move to delivery location
     await this.moveTo(task.deliveryX, task.deliveryY, task.deliveryZ);
     await this.sleep(500);
 
-    // Find nearby empty chest
     const chestBlock = await this.findNearbyEmptyChest(task.deliveryX, task.deliveryY, task.deliveryZ);
     if (!chestBlock) {
       throw new Error('No empty chest found within 4 blocks of delivery location');
     }
 
     await this.updateTaskStep(task.id, 'Depositing items...');
-
     await this.moveToBlock(chestBlock.position.x, chestBlock.position.y, chestBlock.position.z);
     await this.sleep(200);
 
     const chest = await this.bot!.openContainer(chestBlock);
     await this.sleep(100);
 
-    // Only deposit the collected task items (not bot's tools/food/etc)
     const itemsToDeliver = new Set(items.keys());
-    for (const item of this.bot!.inventory.items()) {
+    
+    for (const item of this.getInventoryItems()) {
       if (this.taskCancelled) break;
-      // Only deposit items that were part of the task collection
-      if (itemsToDeliver.has(item.name)) {
-        const neededCount = items.get(item.name) || 0;
-        if (neededCount > 0) {
-          const depositCount = Math.min(item.count, neededCount);
-          try {
-            await chest.deposit(item.type, null, depositCount);
-            items.set(item.name, neededCount - depositCount);
-            await this.sleep(100);
-          } catch (error) {
-            console.error(`Failed to deposit ${item.name}:`, error);
-          }
-        }
+      if (!itemsToDeliver.has(item.name)) continue;
+      
+      const neededCount = items.get(item.name) || 0;
+      if (neededCount <= 0) continue;
+      
+      const depositCount = Math.min(item.count, neededCount);
+      try {
+        await chest.deposit(item.type, null, depositCount);
+        items.set(item.name, neededCount - depositCount);
+        await this.sleep(100);
+      } catch (e) {
+        console.error(`Failed to deposit ${item.name}:`, e);
       }
     }
 
-    await this.sleep(100);
     chest.close();
   }
 
@@ -1302,137 +1447,199 @@ export class BotInstance extends EventEmitter {
       throw new Error('No shulkers selected for packing');
     }
 
-    console.log(`[Task ${task.id}] Packing items into shulkers`);
-    
-    // Get empty shulker locations
     const shulkerItems = await prisma.chestItem.findMany({
-      where: {
-        id: { in: task.selectedShulkerIds },
-      },
-      include: {
-        chest: true,
-      },
+      where: { id: { in: task.selectedShulkerIds } },
+      include: { chest: true },
     });
 
     if (shulkerItems.length === 0) {
       throw new Error('Selected shulkers not found in storage');
     }
 
-    // Get all items in inventory to pack
-    const inventoryItems = this.bot!.inventory.items();
-    if (inventoryItems.length === 0) {
-      console.log(`[Task ${task.id}] No items to pack`);
-      return;
-    }
+    const itemsToPack = new Map(collectedItems);
+    
+    // Get packable items (items to pack that aren't shulkers)
+    const getPackableItems = () => {
+      return this.getInventoryItems().filter((item: any) => {
+        const remaining = itemsToPack.get(item.name);
+        return remaining !== undefined && remaining > 0 && !item.name.includes('shulker_box');
+      });
+    };
+
+    let packableItems = getPackableItems();
+    if (packableItems.length === 0) return;
 
     let shulkerIndex = 0;
     
-    while (shulkerIndex < shulkerItems.length && inventoryItems.length > 0) {
+    while (shulkerIndex < shulkerItems.length && packableItems.length > 0) {
       if (this.taskCancelled) break;
 
       const shulkerItem = shulkerItems[shulkerIndex];
-      await this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length} for packing...`);
+      await this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length}...`);
       
-      // Go get the empty shulker
+      // Get the empty shulker from chest
       await this.moveToBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
       await this.sleep(200);
 
       const chestBlock = this.bot!.blockAt(new Vec3(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z));
-      if (!chestBlock) {
-        shulkerIndex++;
-        continue;
-      }
+      if (!chestBlock) { shulkerIndex++; continue; }
 
       const chest = await this.bot!.openContainer(chestBlock);
       await this.sleep(100);
 
-      // Find the shulker in the chest
       const shulkerInChest = chest.containerItems().find(i => 
         i.slot === shulkerItem.slot && i.name.includes('shulker_box')
       );
 
       if (!shulkerInChest) {
-        console.log(`[Task ${task.id}] Shulker not found at expected slot`);
         chest.close();
         shulkerIndex++;
         continue;
       }
 
-      // Take the shulker
       await chest.withdraw(shulkerInChest.type, null, 1);
-      await this.sleep(100);
       chest.close();
       await this.sleep(200);
 
-      // Delete the shulker from database as it's no longer in the chest
+      // Remove from database
       await prisma.chestItem.delete({ where: { id: shulkerItem.id } }).catch(() => {});
 
-      // Place the shulker
+      // Find a place to put the shulker
       const placePos = await this.findPlaceableSpot();
-      if (!placePos) {
-        console.log(`[Task ${task.id}] No place to put shulker`);
-        shulkerIndex++;
-        continue;
-      }
+      if (!placePos) { shulkerIndex++; continue; }
 
-      const shulkerInInv = this.bot!.inventory.items().find(i => i.name.includes('shulker_box'));
-      if (!shulkerInInv) {
-        shulkerIndex++;
-        continue;
-      }
+      const shulkerInInv = this.findShulkerInInventory();
+      if (!shulkerInInv) { shulkerIndex++; continue; }
 
       await this.bot!.equip(shulkerInInv, 'hand');
       await this.sleep(100);
 
       const referenceBlock = this.bot!.blockAt(placePos.offset(0, -1, 0));
-      if (referenceBlock) {
-        try {
-          await this.bot!.placeBlock(referenceBlock, new Vec3(0, 1, 0));
-          await this.sleep(400);
-        } catch (placeErr) {
-          console.log(`[Task ${task.id}] Failed to place shulker:`, placeErr);
-          shulkerIndex++;
-          continue;
-        }
+      if (!referenceBlock) { shulkerIndex++; continue; }
+      
+      try {
+        await this.lookAtWithRetry(placePos, 2);
+        await this.bot!.placeBlock(referenceBlock, new Vec3(0, 1, 0));
+        await this.sleep(500);
+      } catch {
+        shulkerIndex++;
+        continue;
       }
 
-      // Open and fill the shulker
       const placedShulker = this.bot!.blockAt(placePos);
-      if (placedShulker && placedShulker.name.includes('shulker_box')) {
-        const shulkerContainer = await this.bot!.openContainer(placedShulker);
-        await this.sleep(100);
-
-        await this.updateTaskStep(task.id, `Packing items into shulker ${shulkerIndex + 1}...`);
-
-        // Deposit items into shulker (max 27 slots)
-        const itemsToPack = this.bot!.inventory.items().filter(i => !i.name.includes('shulker_box'));
-        for (const item of itemsToPack) {
-          if (this.taskCancelled) break;
-          try {
-            await shulkerContainer.deposit(item.type, null, item.count);
-            await this.sleep(50);
-          } catch (e) {
-            // Shulker might be full
-            break;
-          }
-        }
-
-        await this.sleep(100);
-        shulkerContainer.close();
-        await this.sleep(300);
+      if (!placedShulker || !placedShulker.name.includes('shulker_box')) {
+        shulkerIndex++;
+        continue;
       }
 
-      // Break the shulker to pick it up (now filled)
-      await this.bot!.dig(placedShulker!);
-      await this.sleep(500);
+      // Open shulker and pack items
+      const shulkerContainer = await this.bot!.openContainer(placedShulker);
+      await this.sleep(200);
+      
+      await this.updateTaskStep(task.id, `Packing items into shulker ${shulkerIndex + 1}...`);
+      packableItems = getPackableItems();
+      
+      // Deposit items into shulker
+      for (const item of packableItems) {
+        if (this.taskCancelled) break;
+        
+        const remainingToPack = itemsToPack.get(item.name) || 0;
+        if (remainingToPack <= 0) continue;
+        
+        const depositCount = Math.min(item.count, remainingToPack);
+        const beforeCount = this.countItemInInventory(item.name);
+        
+        try {
+          const invItem = this.bot!.inventory.slots[item.slot];
+          if (!invItem || invItem.name !== item.name) {
+            const foundItem = this.bot!.inventory.items().find((i: any) => i.name === item.name);
+            if (foundItem) {
+              await shulkerContainer.deposit(foundItem.type, foundItem.metadata, depositCount);
+            } else {
+              continue;
+            }
+          } else {
+            await shulkerContainer.deposit(item.type, item.metadata, depositCount);
+          }
+          await this.sleep(150);
+          
+          const actualDeposited = beforeCount - this.countItemInInventory(item.name);
+          if (actualDeposited > 0) {
+            itemsToPack.set(item.name, remainingToPack - actualDeposited);
+          }
+        } catch {
+          break; // Shulker full
+        }
+      }
+
+      shulkerContainer.close();
+      await this.sleep(300);
+
+      // Break shulker to pick it up
+      const shulkerToBreak = this.bot!.blockAt(placePos);
+      if (shulkerToBreak?.name.includes('shulker_box')) {
+        await this.bot!.dig(shulkerToBreak);
+        await this.sleep(300);
+        
+        if (!this.findShulkerInInventory()) {
+          await this.collectNearbyDroppedItem('shulker_box', 3000);
+          await this.sleep(500);
+        }
+      }
 
       shulkerIndex++;
-
-      // Check if we still have items to pack
-      const remainingItems = this.bot!.inventory.items().filter(i => !i.name.includes('shulker_box'));
-      if (remainingItems.length === 0) {
-        console.log(`[Task ${task.id}] All items packed`);
-        break;
+      packableItems = getPackableItems();
+      if (packableItems.length === 0) break;
+    }
+    
+    // Deliver shulkers to player if targetPlayer is set
+    if (task.targetPlayer) {
+      let shulkersToDeliver = this.findShulkersContainingItems(itemsToPack);
+      
+      // Fallback: if no shulkers found via parsing, try any shulker
+      if (shulkersToDeliver.length === 0) {
+        shulkersToDeliver = this.getInventoryItems().filter((s: any) => s.name.includes('shulker_box'));
+      }
+      
+      if (shulkersToDeliver.length > 0) {
+        const player = this.bot!.players[task.targetPlayer];
+        if (player?.entity) {
+          await this.updateTaskStep(task.id, `Walking to ${task.targetPlayer}...`);
+          await this.moveTo(player.entity.position.x, player.entity.position.y, player.entity.position.z);
+          await this.sleep(500);
+          
+          await this.updateTaskStep(task.id, `Dropping shulkers to ${task.targetPlayer}...`);
+          
+          for (const shulker of shulkersToDeliver) {
+            if (this.taskCancelled) break;
+            
+            const targetPlayer = this.bot!.players[task.targetPlayer];
+            if (targetPlayer?.entity) {
+              await this.lookAtWithRetry(targetPlayer.entity.position, 3);
+              await this.bot!.waitForTicks(3);
+            }
+            
+            try {
+              await this.bot!.toss(shulker.type, null, shulker.count);
+            } catch { /* ignore toss errors */ }
+            await this.sleep(150);
+          }
+          
+          // Move back to avoid picking up dropped shulkers
+          const botPos = this.bot!.entity.position;
+          const playerPos = player.entity.position;
+          const dx = botPos.x - playerPos.x;
+          const dz = botPos.z - playerPos.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          
+          if (dist > 0.1) {
+            const backX = botPos.x + (dx / dist) * 3;
+            const backZ = botPos.z + (dz / dist) * 3;
+            await this.moveTo(backX, botPos.y, backZ);
+          } else {
+            await this.moveTo(botPos.x + 3, botPos.y, botPos.z);
+          }
+        }
       }
     }
   }
@@ -1472,27 +1679,44 @@ export class BotInstance extends EventEmitter {
     return null;
   }
 
+  /**
+   * Find a suitable spot to place a shulker box.
+   * Scans for solid blocks with 2 air blocks above in a radius around the bot.
+   */
   private async findPlaceableSpot(): Promise<Vec3 | null> {
     if (!this.bot) return null;
 
-    const botPos = this.bot.entity.position.floored();
+    const botPos = this.bot.entity.position;
+    const maxDistance = 4;
 
-    // Check spots around the bot
-    const offsets = [
-      new Vec3(1, 0, 0),
-      new Vec3(-1, 0, 0),
-      new Vec3(0, 0, 1),
-      new Vec3(0, 0, -1),
-    ];
-
-    for (const offset of offsets) {
-      const checkPos = botPos.plus(offset);
-      const blockAtPos = this.bot.blockAt(checkPos);
-      const blockBelow = this.bot.blockAt(checkPos.offset(0, -1, 0));
-
-      if (blockAtPos && blockAtPos.name === 'air' && blockBelow && blockBelow.boundingBox === 'block') {
-        return checkPos;
+    const solidBlock = this.bot.findBlock({
+      point: botPos,
+      maxDistance: maxDistance,
+      matching: (block) => {
+        if (!block || block.boundingBox !== 'block') return false;
+        if (block.name.includes('chest') || block.name.includes('shulker') || block.name.includes('barrel')) return false;
+        return true;
+      },
+      useExtraInfo: (block) => {
+        const blockAbove1 = this.bot!.blockAt(block.position.offset(0, 1, 0));
+        if (!blockAbove1 || blockAbove1.name !== 'air') return false;
+        
+        const blockAbove2 = this.bot!.blockAt(block.position.offset(0, 2, 0));
+        if (!blockAbove2 || blockAbove2.name !== 'air') return false;
+        
+        const placePos = block.position.offset(0, 1, 0);
+        const botFeet = this.bot!.entity.position.floored();
+        if (placePos.x === botFeet.x && placePos.z === botFeet.z && 
+            Math.abs(placePos.y - botFeet.y) < 2) {
+          return false;
+        }
+        
+        return true;
       }
+    });
+
+    if (solidBlock) {
+      return solidBlock.position.offset(0, 1, 0);
     }
 
     return null;

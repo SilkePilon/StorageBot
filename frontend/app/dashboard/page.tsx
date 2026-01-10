@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useDebounce } from "use-debounce";
 import { useBots, useConnectBot, useDisconnectBot, useDeleteBot, useSetBotVisibility, usePublicBots } from "@/hooks/use-bots";
-import { useStorageSystems, useStorageItems, useStartIndexing, useStorageStats } from "@/hooks/use-storage";
+import { useStorageSystems, useStorageItems, useStartIndexing, useStopIndexing, useStorageStats } from "@/hooks/use-storage";
 import { useBotStore } from "@/stores/bot-store";
 import { useSocket } from "@/hooks/use-socket";
 import { useQueryClient } from "@tanstack/react-query";
@@ -41,11 +41,11 @@ import {
   Lock,
   Users,
   Package,
-  ShoppingCart,
   X,
   Minus,
   Check,
   ClipboardList,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -172,6 +172,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   );
   const { data: storageStats, isLoading: statsLoading } = useStorageStats(selectedStorageId || "", bot.id);
   const startIndex = useStartIndexing();
+  const stopIndex = useStopIndexing();
 
   const status = botStatuses[bot.id] || bot.runtimeStatus;
   const isOnline = status?.connected;
@@ -567,7 +568,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
             <div className="flex items-center gap-1.5 shrink-0">
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5">
                 <Users className="mr-1 h-2.5 w-2.5" />
-                {bot.user.name || "Unknown"}
+                {bot.user.username || "Unknown"}
               </Badge>
             </div>
           )}
@@ -675,7 +676,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                         onClick={() => setSearchQuery("")}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                       >
-                        <span className="text-xs">✕</span>
+                        <X className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
@@ -689,25 +690,60 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                     Refresh
                   </Button>
                   {isOwner && isOnline && selectedStorageId && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={handleStartIndex}
-                      disabled={startIndex.isPending || isIndexing}
-                    >
-                      {startIndex.isPending || isIndexing ? (
-                        <>
-                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                          Indexing...
-                        </>
+                    <>
+                      {isIndexing ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => {
+                            stopIndex.mutate(selectedStorageId, {
+                              onSuccess: () => {
+                                toast.success("Indexing stopped");
+                                setIndexingProgress(null);
+                                setIndexingStatus("");
+                              },
+                              onError: (error) => {
+                                toast.error("Failed to stop indexing");
+                              },
+                            });
+                          }}
+                          disabled={stopIndex.isPending}
+                        >
+                          {stopIndex.isPending ? (
+                            <>
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              Stopping...
+                            </>
+                          ) : (
+                            <>
+                              <Square className="mr-1 h-3 w-3 fill-current" />
+                              Stop
+                            </>
+                          )}
+                        </Button>
                       ) : (
-                        <>
-                          <RefreshCw className="mr-1 h-3 w-3" />
-                          Re-index
-                        </>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={handleStartIndex}
+                          disabled={startIndex.isPending}
+                        >
+                          {startIndex.isPending ? (
+                            <>
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              Starting...
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw className="mr-1 h-3 w-3" />
+                              Re-index
+                            </>
+                          )}
+                        </Button>
                       )}
-                    </Button>
+                    </>
                   )}
                   {allShulkerIds.length > 0 && (
                     <ShulkerToggleButton
@@ -867,7 +903,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                                                 version={status?.serverVersion || bot.serverVersion || "1.21.4"}
                                               />
                                               {isContentSelected && (
-                                                <span className="absolute -top-1 -right-1 h-3 w-3 bg-green-500 rounded-full flex items-center justify-center">
+                                                <span className="absolute -top-1 -right-1 h-3 w-3 bg-green-500 rounded flex items-center justify-center">
                                                   <Check className="h-2 w-2 text-white" />
                                                 </span>
                                               )}
@@ -912,7 +948,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                                     version={serverVersion}
                                   />
                                   {isSelected && (
-                                    <span className="absolute -top-1 -right-1 h-4 w-4 bg-green-500 rounded-full flex items-center justify-center">
+                                    <span className="absolute -top-1 -right-1 h-4 w-4 bg-green-500 rounded flex items-center justify-center">
                                       <Check className="h-2.5 w-2.5 text-white" />
                                     </span>
                                   )}
@@ -956,8 +992,8 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                       onClick={() => setCreateTaskDialogOpen(true)}
                       disabled={!isOnline}
                     >
-                      <ShoppingCart className="mr-1 h-3 w-3" />
-                      Request
+                      <Package className="mr-1 h-3 w-3" />
+                      {isIndexing ? "Request (Queued)" : "Request"}
                     </Button>
                   </div>
                 )}
@@ -973,7 +1009,6 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                     ) : (
                       <ChevronRight className="h-4 w-4" />
                     )}
-                    <ClipboardList className="h-4 w-4" />
                     Active Requests
                   </button>
                   {showTasks && (
@@ -996,6 +1031,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
           selectedItems={selectedItemsArray}
           onClearSelection={clearSelection}
           serverVersion={serverVersion}
+          isIndexing={isIndexing}
         />
       )}
     </Collapsible>

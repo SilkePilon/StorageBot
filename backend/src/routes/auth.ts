@@ -7,35 +7,32 @@ import { prisma } from '../lib/prisma.js';
 import { config } from '../config/index.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
-const signOptions: SignOptions = {
-  expiresIn: config.jwt.expiresIn as string,
-};
+const JWT_OPTIONS: SignOptions = { expiresIn: config.jwt.expiresIn as jwt.SignOptions['expiresIn'] };
 
 const router = Router();
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
   password: z.string().min(6),
-  name: z.string().optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  username: z.string(),
   password: z.string(),
 });
 
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name } = registerSchema.parse(req.body);
+    const { username, password } = registerSchema.parse(req.body);
 
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
-      where: { email },
+      where: { username },
     });
 
     if (existingUser) {
-      res.status(400).json({ error: 'Email already registered' });
+      res.status(400).json({ error: 'Username already taken' });
       return;
     }
 
@@ -45,20 +42,18 @@ router.post('/register', async (req, res) => {
     // Create user
     const user = await prisma.user.create({
       data: {
-        email,
+        username,
         password: hashedPassword,
-        name,
       },
       select: {
         id: true,
-        email: true,
-        name: true,
+        username: true,
         createdAt: true,
       },
     });
 
     // Generate token
-    const token = jwt.sign({ userId: user.id }, config.jwt.secret, signOptions);
+    const token = jwt.sign({ userId: user.id }, config.jwt.secret, JWT_OPTIONS);
 
     res.status(201).json({ user, token });
   } catch (error) {
@@ -68,7 +63,7 @@ router.post('/register', async (req, res) => {
     }
     // Handle Prisma unique constraint violation (race condition)
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      res.status(409).json({ error: 'Email already registered' });
+      res.status(409).json({ error: 'Username already taken' });
       return;
     }
     console.error('Register error:', error);
@@ -79,11 +74,11 @@ router.post('/register', async (req, res) => {
 // Login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { username, password } = loginSchema.parse(req.body);
 
     // Find user
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { username },
     });
 
     if (!user) {
@@ -100,13 +95,12 @@ router.post('/login', async (req, res) => {
     }
 
     // Generate token
-    const token = jwt.sign({ userId: user.id }, config.jwt.secret, signOptions);
+    const token = jwt.sign({ userId: user.id }, config.jwt.secret, JWT_OPTIONS);
 
     res.json({
       user: {
         id: user.id,
-        email: user.email,
-        name: user.name,
+        username: user.username,
         createdAt: user.createdAt,
       },
       token,
@@ -128,8 +122,7 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res) => {
       where: { id: req.userId },
       select: {
         id: true,
-        email: true,
-        name: true,
+        username: true,
         createdAt: true,
         _count: {
           select: { bots: true },

@@ -7,8 +7,7 @@ export interface AuthRequest extends Request {
   userId?: string;
   user?: {
     id: string;
-    email: string;
-    name: string | null;
+    username: string;
   };
 }
 
@@ -31,7 +30,7 @@ export async function authMiddleware(
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, email: true, name: true },
+      select: { id: true, username: true },
     });
 
     if (!user) {

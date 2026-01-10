@@ -57,6 +57,18 @@ export function useStartIndexing() {
   });
 }
 
+export function useStopIndexing() {
+  const token = useAuthStore((state) => state.token);
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => storageApi.stopIndex(token!, id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ["storage-system", id] });
+    },
+  });
+}
+
 export function useStorageItems(id: string, search?: string, botId?: string) {
   const token = useAuthStore((state) => state.token);
   const queryClient = useQueryClient();
