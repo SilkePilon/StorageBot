@@ -18,7 +18,8 @@ _Automatically index, search, and retrieve items from your storage systems_
 > [!NOTE]
 > StorageBot is currently in **early development**. While core features are functional, you may encounter bugs or incomplete functionality. Your feedback is invaluable!
 
-> [!TIP] > **Found a bug or have a feature request?** Please open an issue on the [GitHub Issues](https://github.com/SilkePilon/StorageBot/issues) page. We appreciate all contributions and feedback from the community!
+> [!TIP]
+> **Found a bug or have a feature request?** Please open an issue on the [GitHub Issues](https://github.com/SilkePilon/StorageBot/issues) page. We appreciate all contributions and feedback from the community!
 
 ---
 
