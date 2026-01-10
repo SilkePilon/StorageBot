@@ -17,8 +17,8 @@ const registerSchema = z.object({
 });
 
 const loginSchema = z.object({
-  username: z.string(),
-  password: z.string(),
+  username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
+  password: z.string().min(6),
 });
 
 // Register
@@ -32,7 +32,7 @@ router.post('/register', async (req, res) => {
     });
 
     if (existingUser) {
-      res.status(400).json({ error: 'Username already taken' });
+      res.status(409).json({ error: 'Username already taken' });
       return;
     }
 

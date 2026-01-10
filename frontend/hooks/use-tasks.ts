@@ -157,6 +157,12 @@ export function useTasks(botId: string) {
       socket.off("task:progress", handleTaskProgress);
       socket.off("task:step", handleTaskStep);
       socket.off("task:shulkerFilled", handleTaskProgress);
+      
+      // Dismiss any active loading toasts on cleanup to prevent orphaned toasts
+      activeToastsRef.current.forEach((toastId) => {
+        toast.dismiss(toastId);
+      });
+      activeToastsRef.current.clear();
     };
   }, [token, botId, queryClient]);
 

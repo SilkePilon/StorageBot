@@ -38,7 +38,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-storagebot}:${POSTGRES_PASSWORD:-storagebot_secret}@postgres:5432/${POSTGRES_DB:-storagebot}?schema=public
       JWT_SECRET: ${JWT_SECRET:-dev-fallback-secret-not-for-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      PORT: ${PORT:-3001}
+      PORT: 3001
       NODE_ENV: development
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     ports:

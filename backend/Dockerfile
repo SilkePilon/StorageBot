@@ -26,6 +26,15 @@ RUN npm run build
 COPY backend/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+# Create non-root user for improved security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+# Change ownership of app directory
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
 # Expose port
 EXPOSE 3001
 

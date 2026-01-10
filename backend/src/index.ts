@@ -13,7 +13,10 @@ const shouldSuppress = (msg: string) => msg.includes('PartialReadError');
 const originalStderrWrite = process.stderr.write.bind(process.stderr);
 process.stderr.write = (chunk: any, encoding?: any, callback?: any): boolean => {
   const message = typeof chunk === 'string' ? chunk : chunk.toString();
-  if (shouldSuppress(message)) return true;
+  if (shouldSuppress(message)) {
+    if (typeof callback === 'function') callback();
+    return true;
+  }
   return originalStderrWrite(chunk, encoding, callback);
 };
 
@@ -21,7 +24,10 @@ process.stderr.write = (chunk: any, encoding?: any, callback?: any): boolean => 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk: any, encoding?: any, callback?: any): boolean => {
   const message = typeof chunk === 'string' ? chunk : chunk.toString();
-  if (shouldSuppress(message)) return true;
+  if (shouldSuppress(message)) {
+    if (typeof callback === 'function') callback();
+    return true;
+  }
   return originalStdoutWrite(chunk, encoding, callback);
 };
 

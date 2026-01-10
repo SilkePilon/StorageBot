@@ -598,6 +598,34 @@ export class BotInstance extends EventEmitter {
 
       console.log(`Found ${totalChests} chests in storage ${storageId}`);
 
+      // Handle empty storage - nothing to index
+      if (totalChests === 0) {
+        await prisma.storageSystem.update({
+          where: { id: storageId },
+          data: {
+            isIndexed: true,
+            lastIndexed: new Date(),
+            indexProgress: 100,
+          },
+        });
+
+        emitToBot(this.id, 'storage:indexProgress', {
+          botId: this.id,
+          storageId,
+          progress: 100,
+          status: 'No chests found in storage area',
+        });
+
+        emitToBot(this.id, 'storage:indexComplete', {
+          botId: this.id,
+          storageId,
+          totalChests: 0,
+          wasStopped: false,
+        });
+
+        return;
+      }
+
       // Clear existing chest data
       await prisma.chest.deleteMany({
         where: { storageSystemId: storageId },
@@ -832,6 +860,7 @@ export class BotInstance extends EventEmitter {
   private async collectNearbyDroppedItem(itemNameContains: string, timeoutMs: number = 5000): Promise<boolean> {
     const startTime = Date.now();
     const botPos = this.bot!.entity.position;
+    const filterName = itemNameContains.toLowerCase();
     
     const findDroppedItems = () => {
       return Object.values(this.bot!.entities).filter((e: any) => {
@@ -843,7 +872,18 @@ export class BotInstance extends EventEmitter {
           e.mobType === 'Item';
         
         if (!isItemEntity) return false;
-        return e.position.distanceTo(botPos) < 8;
+        if (e.position.distanceTo(botPos) >= 8) return false;
+        
+        // Filter by item name if the entity has item metadata
+        if (filterName && e.metadata) {
+          const itemData = e.metadata.find((m: any) => m && typeof m === 'object' && m.itemId);
+          if (itemData && itemData.itemId) {
+            const itemName = (itemData.itemId.name || itemData.itemId || '').toLowerCase();
+            return itemName.includes(filterName);
+          }
+        }
+        
+        return true;
       });
     };
     
@@ -1302,6 +1342,23 @@ export class BotInstance extends EventEmitter {
             if (shulkerToReturn) {
               await chestAgain.deposit(shulkerToReturn.type, null, 1);
               await this.sleep(100);
+              
+              // Update the shulker's slot in DB if it moved to a different position
+              const depositedShulker = chestAgain.containerItems().find((i) => 
+                i.name.includes('shulker_box') && i.name === shulkerToReturn.name
+              );
+              if (depositedShulker && depositedShulker.slot !== shulkerOriginalSlot) {
+                // Find the chestItemId for this shulker and update its slot
+                const chestItemId = slotsStillNeeded[0]?.chestItemId;
+                if (chestItemId) {
+                  await prisma.chestItem.update({
+                    where: { id: chestItemId },
+                    data: { slot: depositedShulker.slot },
+                  }).catch((err) => {
+                    console.error(`Failed to update shulker slot in DB:`, err);
+                  });
+                }
+              }
             }
 
             chestAgain.close();

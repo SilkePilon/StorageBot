@@ -249,7 +249,7 @@ export class BotManager {
       .then(() => {
         // After indexing completes, process any queued tasks
         console.log(`[BotManager] Indexing complete for bot ${botId}, processing queued tasks`);
-        this.processTaskQueue(botId);
+        return this.processTaskQueue(botId);
       })
       .catch((error) => {
         console.error('Indexing error:', error);
