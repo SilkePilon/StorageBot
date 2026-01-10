@@ -51,7 +51,6 @@ export function ItemIcon({
       <div
         className={`flex items-center justify-center ${className}`}
         style={{ width: size, height: size }}
-        title={showTooltip ? itemName || itemId : undefined}
       >
         <Box className="text-muted-foreground" style={{ width: size * 0.6, height: size * 0.6 }} />
       </div>
@@ -62,7 +61,6 @@ export function ItemIcon({
     <img
       src={textureUrl}
       alt={itemName || itemId}
-      title={showTooltip ? itemName || itemId : undefined}
       className={`${className}`}
       style={{ 
         width: size, 

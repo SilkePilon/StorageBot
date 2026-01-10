@@ -23,7 +23,7 @@ export function SectionCards() {
     return (
       <div className="flex items-center gap-2 flex-wrap">
         {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="h-7 w-24 bg-muted rounded-full animate-pulse" />
+          <div key={i} className="h-7 w-24 bg-muted rounded-md animate-pulse" />
         ))}
       </div>
     );

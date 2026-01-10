@@ -23,14 +23,14 @@ _Automatically index, search, and retrieve items from your storage systems_
 >
 > ### Roadmap
 >
-> - [X] Automated Storage Indexing
-> - [X] Smart Search
-> - [X] Real-time Dashboard
-> - [X] Task System
-> - [X] Multiple Delivery Methods
-> - [X] Microsoft Authentication
-> - [X] Multi-user Support
-> - [X] Real-time Updates via WebSocket
+> - [x] Automated Storage Indexing
+> - [x] Smart Search
+> - [x] Real-time Dashboard
+> - [x] Task System
+> - [x] Multiple Delivery Methods
+> - [x] Microsoft Authentication
+> - [x] Multi-user Support
+> - [x] Real-time Updates via WebSocket
 > - [ ] Random item sorting across storage chests
 > - [ ] Category-based item sorting
 > - [ ] Litematica schematic upload support
@@ -60,22 +60,113 @@ Before you begin, ensure you have the following installed:
 
 ## Quick Start
 
-### 1. Clone the Repository
+You can run StorageBot either with **Docker** (recommended) or **manually**.
+
+---
+
+### Option A: Docker (Recommended)
+
+The easiest way to run StorageBot is with Docker Compose, which runs everything in containers.
+
+#### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/SilkePilon/StorageBot.git
 cd StorageBot
 ```
 
-### 2. Start the Database
+#### 2. Create Environment File
 
 ```bash
+cp .env.example .env
+```
+
+Edit the `.env` file with your configuration:
+
+```env
+# Database
+POSTGRES_USER=storagebot
+POSTGRES_PASSWORD=storagebot_secret
+POSTGRES_DB=storagebot
+
+# JWT Authentication
+JWT_SECRET="your-super-secret-jwt-key-change-in-production"
+JWT_EXPIRES_IN="7d"
+
+# Backend
+PORT=3001
+NODE_ENV=production
+FRONTEND_URL="http://localhost:3000"
+
+# Frontend
+NEXT_PUBLIC_API_URL="http://localhost:3001"
+```
+
+> ⚠️ **Important:** In production, always use a strong, unique `JWT_SECRET` and `POSTGRES_PASSWORD`!
+
+#### 3. Start All Services
+
+```bash
+# Production mode
+docker-compose up -d
+
+# Or development mode (with hot reload)
+docker-compose -f docker-compose.dev.yml up -d
+```
+
+This starts:
+
+- PostgreSQL database on port 5432
+- Backend API on port 3001 (automatically applies database schema on first run)
+- Frontend on port 3000
+
+#### 4. Access the Web Interface
+
+Open your browser and navigate to:
+
+```
+http://localhost:3000
+```
+
+#### Docker Commands
+
+```bash
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up -d --build
+
+# Reset database (WARNING: deletes all data)
+docker-compose down -v
 docker-compose up -d
 ```
 
-This starts a PostgreSQL database on port 5432.
+---
 
-### 3. Setup the Backend
+### Option B: Manual Setup
+
+If you prefer to run services manually without Docker containers for the app.
+
+#### 1. Clone the Repository
+
+```bash
+git clone https://github.com/SilkePilon/StorageBot.git
+cd StorageBot
+```
+
+#### 2. Start the Database
+
+```bash
+docker-compose up -d postgres
+```
+
+This starts only the PostgreSQL database on port 5432.
+
+#### 3. Setup the Backend
 
 ```bash
 cd backend
@@ -108,7 +199,7 @@ npm run db:push
 npm run dev
 ```
 
-### 4. Setup the Frontend
+#### 4. Setup the Frontend
 
 Open a new terminal:
 
@@ -122,7 +213,7 @@ npm install
 npm run dev
 ```
 
-### 5. Access the Web Interface
+#### 5. Access the Web Interface
 
 Open your browser and navigate to:
 
@@ -194,20 +285,40 @@ StorageBot/
 
 ## Configuration
 
-### Backend Environment Variables
+### Root Environment Variables (Docker)
 
-| Variable         | Description                  | Default                   |
-| ---------------- | ---------------------------- | ------------------------- |
-| `DATABASE_URL` | PostgreSQL connection string | Required                  |
-| `JWT_SECRET`   | Secret key for JWT tokens    | Required                  |
+When using Docker, create a `.env` file in the project root:
+
+| Variable              | Description                  | Default                 |
+| --------------------- | ---------------------------- | ----------------------- |
+| `POSTGRES_USER`       | PostgreSQL username          | `storagebot`            |
+| `POSTGRES_PASSWORD`   | PostgreSQL password          | `storagebot_secret`     |
+| `POSTGRES_DB`         | PostgreSQL database name     | `storagebot`            |
+| `JWT_SECRET`          | Secret key for JWT tokens    | Required in production  |
+| `JWT_EXPIRES_IN`      | JWT token expiration         | `7d`                    |
+| `PORT`                | Backend API server port      | `3001`                  |
+| `NODE_ENV`            | Environment mode             | `development`           |
+| `FRONTEND_URL`        | Frontend URL for CORS        | `http://localhost:3000` |
+| `NEXT_PUBLIC_API_URL` | Backend API URL for frontend | `http://localhost:3001` |
+
+### Backend Environment Variables (Manual Setup)
+
+When running manually, create a `.env` file in the `backend/` directory:
+
+| Variable       | Description                  | Default                 |
+| -------------- | ---------------------------- | ----------------------- |
+| `DATABASE_URL` | PostgreSQL connection string | Required                |
+| `JWT_SECRET`   | Secret key for JWT tokens    | Required                |
 | `PORT`         | API server port              | `3001`                  |
 | `FRONTEND_URL` | Frontend URL for CORS        | `http://localhost:3000` |
 | `NODE_ENV`     | Environment mode             | `development`           |
 
-### Frontend Environment Variables
+### Frontend Environment Variables (Manual Setup)
 
-| Variable                | Description     | Default                   |
-| ----------------------- | --------------- | ------------------------- |
+When running manually, create a `.env.local` file in the `frontend/` directory:
+
+| Variable              | Description     | Default                 |
+| --------------------- | --------------- | ----------------------- |
 | `NEXT_PUBLIC_API_URL` | Backend API URL | `http://localhost:3001` |
 
 ## Development

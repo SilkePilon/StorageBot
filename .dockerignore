@@ -1,0 +1,54 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build output
+dist
+**/dist
+.next
+**/.next
+out
+**/out
+
+# Environment files (loaded via docker-compose)
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
+
+# IDE
+.vscode
+.idea
+**/.vscode
+**/.idea
+
+# Logs
+*.log
+npm-debug.log*
+**/*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Test files
+coverage
+**/coverage
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Documentation (keep README)
+*.md
+!README.md
+!**/README.md
+
+# Auth cache (mounted as volume)
+backend/auth_cache

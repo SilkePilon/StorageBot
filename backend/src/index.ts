@@ -5,6 +5,48 @@ import { config } from './config/index.js';
 import { initializeSocket } from './lib/socket.js';
 import { BotManager } from './bot/BotManager.js';
 
+// Suppress PartialReadError spam from mineflayer/protodef particle packet parsing
+// This is a known issue with Minecraft 1.20.5+ - the errors are harmless but spam the logs
+const shouldSuppress = (msg: string) => msg.includes('PartialReadError');
+
+// Intercept stderr.write
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = (chunk: any, encoding?: any, callback?: any): boolean => {
+  const message = typeof chunk === 'string' ? chunk : chunk.toString();
+  if (shouldSuppress(message)) {
+    if (typeof callback === 'function') callback();
+    return true;
+  }
+  return originalStderrWrite(chunk, encoding, callback);
+};
+
+// Intercept stdout.write (some errors go here)
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk: any, encoding?: any, callback?: any): boolean => {
+  const message = typeof chunk === 'string' ? chunk : chunk.toString();
+  if (shouldSuppress(message)) {
+    if (typeof callback === 'function') callback();
+    return true;
+  }
+  return originalStdoutWrite(chunk, encoding, callback);
+};
+
+// Intercept console.error
+const originalConsoleError = console.error.bind(console);
+console.error = (...args: any[]) => {
+  const message = args.map(a => String(a)).join(' ');
+  if (shouldSuppress(message)) return;
+  originalConsoleError(...args);
+};
+
+// Intercept console.log (errors sometimes go here too)
+const originalConsoleLog = console.log.bind(console);
+console.log = (...args: any[]) => {
+  const message = args.map(a => String(a)).join(' ');
+  if (shouldSuppress(message)) return;
+  originalConsoleLog(...args);
+};
+
 // Routes
 import authRoutes from './routes/auth.js';
 import botsRoutes from './routes/bots.js';

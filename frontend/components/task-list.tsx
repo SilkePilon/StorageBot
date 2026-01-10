@@ -288,7 +288,7 @@ function TaskCard({
 
               {/* Actions */}
               <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                {isActive && (
+                {(isActive || isPaused) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -304,7 +304,7 @@ function TaskCard({
                     <TooltipContent>Cancel</TooltipContent>
                   </Tooltip>
                 )}
-                {isComplete && (
+                {(isComplete || isPaused) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

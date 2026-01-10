@@ -41,7 +41,7 @@ router.get('/public', authMiddleware, async (req: AuthRequest, res) => {
         user: {
           select: {
             id: true,
-            name: true,
+            username: true,
           },
         },
         _count: {

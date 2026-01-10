@@ -38,13 +38,13 @@ async function fetchApi<T>(
 
 // Auth
 export const authApi = {
-  register: (data: { email: string; password: string; name?: string }) =>
+  register: (data: { username: string; password: string }) =>
     fetchApi<{ user: any; token: string }>("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
-  login: (data: { email: string; password: string }) =>
+  login: (data: { username: string; password: string }) =>
     fetchApi<{ user: any; token: string }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(data),
@@ -169,6 +169,12 @@ export const storageApi = {
 
   startIndex: (token: string, id: string) =>
     fetchApi<any>(`/api/storage/${id}/index`, {
+      method: "POST",
+      token,
+    }),
+
+  stopIndex: (token: string, id: string) =>
+    fetchApi<any>(`/api/storage/${id}/stop-index`, {
       method: "POST",
       token,
     }),

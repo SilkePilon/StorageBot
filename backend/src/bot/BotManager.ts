@@ -245,14 +245,28 @@ export class BotManager {
     }
     
     // Run indexing in background
-    bot.indexStorage(storageId).catch((error) => {
-      console.error('Indexing error:', error);
-      emitToBot(botId, 'storage:indexError', {
-        botId,
-        storageId,
-        error: (error as Error).message,
+    bot.indexStorage(storageId)
+      .then(() => {
+        // After indexing completes, process any queued tasks
+        console.log(`[BotManager] Indexing complete for bot ${botId}, processing queued tasks`);
+        return this.processTaskQueue(botId);
+      })
+      .catch((error) => {
+        console.error('Indexing error:', error);
+        emitToBot(botId, 'storage:indexError', {
+          botId,
+          storageId,
+          error: (error as Error).message,
+        });
       });
-    });
+  }
+
+  stopIndexing(botId: string): boolean {
+    const bot = this.bots.get(botId);
+    if (!bot) {
+      return false;
+    }
+    return bot.stopIndexing();
   }
 
   // ============ TASK QUEUE MANAGEMENT ============
@@ -268,6 +282,12 @@ export class BotManager {
     const bot = this.bots.get(botId);
     if (!bot || !bot.getStatus().connected) {
       console.log(`[TaskQueue] Bot ${botId} not connected, skipping queue processing`);
+      return;
+    }
+
+    // If bot is currently indexing, don't start tasks - they will be processed after indexing completes
+    if (bot.getStatus().isIndexing) {
+      console.log(`[TaskQueue] Bot ${botId} is indexing, tasks will be processed after indexing completes`);
       return;
     }
 

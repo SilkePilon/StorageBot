@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useCreateTask, useEmptyShulkers } from "@/hooks/use-tasks";
 import { ItemIcon } from "@/components/item-icon";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import {
   Plus,
   Trash2,
   MapPin,
+  Check,
 } from "lucide-react";
 
 interface SelectedItem {
@@ -80,6 +81,7 @@ interface CreateTaskDialogProps {
   selectedItems: SelectedItem[];
   onClearSelection: () => void;
   serverVersion?: string;
+  isIndexing?: boolean;
 }
 
 export function CreateTaskDialog({
@@ -90,6 +92,7 @@ export function CreateTaskDialog({
   selectedItems,
   onClearSelection,
   serverVersion = "1.21.4",
+  isIndexing = false,
 }: CreateTaskDialogProps) {
   const [items, setItems] = useState<DialogItem[]>([]);
   const [deliveryMethod, setDeliveryMethod] = useState<string>("DROP_TO_PLAYER");
@@ -111,6 +114,65 @@ export function CreateTaskDialog({
   // Calculate shulkers needed
   const totalItems = items.reduce((sum, i) => sum + i.requestedCount, 0);
   const shulkersNeeded = Math.ceil(totalItems / (27 * 64));
+
+  // Shulker color order for consistent display
+  const shulkerColorOrder = [
+    "shulker_box", // undyed
+    "white_shulker_box",
+    "light_gray_shulker_box",
+    "gray_shulker_box",
+    "black_shulker_box",
+    "brown_shulker_box",
+    "red_shulker_box",
+    "orange_shulker_box",
+    "yellow_shulker_box",
+    "lime_shulker_box",
+    "green_shulker_box",
+    "cyan_shulker_box",
+    "light_blue_shulker_box",
+    "blue_shulker_box",
+    "purple_shulker_box",
+    "magenta_shulker_box",
+    "pink_shulker_box",
+  ];
+
+  // Group shulkers by color and count available
+  const shulkersByColor = useMemo(() => {
+    if (!emptyShulkers) return [];
+    
+    const grouped = new Map<string, { itemId: string; itemName: string; shulkers: any[] }>();
+    
+    for (const shulker of emptyShulkers) {
+      const color = shulker.itemId;
+      if (!grouped.has(color)) {
+        grouped.set(color, {
+          itemId: shulker.itemId,
+          itemName: shulker.itemName,
+          shulkers: [],
+        });
+      }
+      grouped.get(color)!.shulkers.push(shulker);
+    }
+    
+    // Sort by color order
+    return Array.from(grouped.values()).sort((a, b) => {
+      const aIdx = shulkerColorOrder.indexOf(a.itemId);
+      const bIdx = shulkerColorOrder.indexOf(b.itemId);
+      return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+    });
+  }, [emptyShulkers]);
+
+  // Track selected shulkers per color
+  const selectedShulkersByColor = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const id of selectedShulkerIds) {
+      const shulker = emptyShulkers?.find((s: any) => s.id === id);
+      if (shulker) {
+        counts.set(shulker.itemId, (counts.get(shulker.itemId) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [selectedShulkerIds, emptyShulkers]);
 
   // Only initialize items when dialog opens (not on every selectedItems change)
   useEffect(() => {
@@ -263,11 +325,54 @@ export function CreateTaskDialog({
     );
   };
 
+  // Select or deselect one shulker of a specific color
+  const toggleShulkerColor = (colorGroup: { itemId: string; shulkers: any[] }) => {
+    const alreadySelected = colorGroup.shulkers.filter((s) => selectedShulkerIds.includes(s.id));
+    
+    if (alreadySelected.length > 0) {
+      // Deselect all of this color
+      setSelectedShulkerIds((prev) => 
+        prev.filter((id) => !colorGroup.shulkers.some((s) => s.id === id))
+      );
+    } else {
+      // Select the first available shulker of this color
+      const toSelect = colorGroup.shulkers[0];
+      if (toSelect) {
+        setSelectedShulkerIds((prev) => [...prev, toSelect.id]);
+      }
+    }
+  };
+
+  // Add more shulkers of a specific color
+  const addShulkerOfColor = (colorGroup: { itemId: string; shulkers: any[] }) => {
+    const alreadySelected = colorGroup.shulkers.filter((s) => selectedShulkerIds.includes(s.id));
+    const available = colorGroup.shulkers.filter((s) => !selectedShulkerIds.includes(s.id));
+    
+    if (available.length > 0) {
+      setSelectedShulkerIds((prev) => [...prev, available[0].id]);
+    }
+  };
+
+  // Remove one shulker of a specific color
+  const removeShulkerOfColor = (colorGroup: { itemId: string; shulkers: any[] }) => {
+    const selected = colorGroup.shulkers.filter((s) => selectedShulkerIds.includes(s.id));
+    
+    if (selected.length > 0) {
+      const toRemove = selected[selected.length - 1];
+      setSelectedShulkerIds((prev) => prev.filter((id) => id !== toRemove.id));
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[80vh] overflow-hidden flex flex-col p-4 gap-3">
         <DialogHeader className="pb-0 space-y-1">
           <DialogTitle className="text-base">Item Request</DialogTitle>
+          {isIndexing && (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              Bot is currently indexing. Your request will be queued and executed after indexing completes.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-3">
@@ -360,60 +465,74 @@ export function CreateTaskDialog({
             )}
           </div>
 
-          {/* Delivery Method - compact 2x2 grid */}
-          <div className="space-y-1">
-            <Label className="text-xs font-medium text-muted-foreground">Delivery</Label>
+          {/* Delivery Method - square cards */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Delivery Method</Label>
             <RadioGroup
               value={deliveryMethod}
               onValueChange={setDeliveryMethod}
-              className="grid grid-cols-2 gap-1.5"
+              className="grid grid-cols-4 gap-2"
             >
               <label
-                className={`flex items-center gap-1.5 p-2 border rounded cursor-pointer transition-colors ${
+                className={`aspect-square flex flex-col items-center justify-center gap-1.5 p-3 border rounded-lg cursor-pointer transition-all ${
                   deliveryMethod === "DROP_TO_PLAYER"
-                    ? "border-primary bg-primary/5"
-                    : "hover:bg-muted/50"
+                    ? "border-primary bg-primary/10 ring-1 ring-primary"
+                    : "hover:bg-muted/50 hover:border-muted-foreground/30"
                 }`}
               >
-                <RadioGroupItem value="DROP_TO_PLAYER" className="h-3 w-3" />
-                <User className="h-3 w-3" />
-                <span className="text-xs">To Player</span>
+                <RadioGroupItem value="DROP_TO_PLAYER" className="sr-only" />
+                <User className={`h-5 w-5 ${deliveryMethod === "DROP_TO_PLAYER" ? "text-primary" : "text-muted-foreground"}`} />
+                <span className={`text-[10px] text-center leading-tight ${deliveryMethod === "DROP_TO_PLAYER" ? "text-primary font-medium" : "text-muted-foreground"}`}>
+                  To Player
+                </span>
               </label>
 
               <label
-                className={`flex items-center gap-1.5 p-2 border rounded cursor-pointer transition-colors ${
+                className={`aspect-square flex flex-col items-center justify-center gap-1.5 p-3 border rounded-lg cursor-pointer transition-all ${
                   deliveryMethod === "PUT_IN_CHEST"
-                    ? "border-primary bg-primary/5"
-                    : "hover:bg-muted/50"
+                    ? "border-primary bg-primary/10 ring-1 ring-primary"
+                    : "hover:bg-muted/50 hover:border-muted-foreground/30"
                 }`}
               >
-                <RadioGroupItem value="PUT_IN_CHEST" className="h-3 w-3" />
-                <Box className="h-3 w-3" />
-                <span className="text-xs">To Chest</span>
+                <RadioGroupItem value="PUT_IN_CHEST" className="sr-only" />
+                <Box className={`h-5 w-5 ${deliveryMethod === "PUT_IN_CHEST" ? "text-primary" : "text-muted-foreground"}`} />
+                <span className={`text-[10px] text-center leading-tight ${deliveryMethod === "PUT_IN_CHEST" ? "text-primary font-medium" : "text-muted-foreground"}`}>
+                  To Chest
+                </span>
               </label>
 
               <label
-                className={`flex items-center gap-1.5 p-2 border rounded cursor-pointer transition-colors ${
+                className={`aspect-square flex flex-col items-center justify-center gap-1.5 p-3 border rounded-lg cursor-pointer transition-all ${
                   deliveryMethod === "SHULKER_DROP"
-                    ? "border-primary bg-primary/5"
-                    : "hover:bg-muted/50"
+                    ? "border-primary bg-primary/10 ring-1 ring-primary"
+                    : "hover:bg-muted/50 hover:border-muted-foreground/30"
                 }`}
               >
-                <RadioGroupItem value="SHULKER_DROP" className="h-3 w-3" />
-                <Package className="h-3 w-3" />
-                <span className="text-xs">Shulker → Player</span>
+                <RadioGroupItem value="SHULKER_DROP" className="sr-only" />
+                <div className="relative">
+                  <Package className={`h-5 w-5 ${deliveryMethod === "SHULKER_DROP" ? "text-primary" : "text-muted-foreground"}`} />
+                  <User className={`h-2.5 w-2.5 absolute -bottom-0.5 -right-0.5 ${deliveryMethod === "SHULKER_DROP" ? "text-primary" : "text-muted-foreground"}`} />
+                </div>
+                <span className={`text-[10px] text-center leading-tight ${deliveryMethod === "SHULKER_DROP" ? "text-primary font-medium" : "text-muted-foreground"}`}>
+                  Shulker
+                </span>
               </label>
 
               <label
-                className={`flex items-center gap-1.5 p-2 border rounded cursor-pointer transition-colors ${
+                className={`aspect-square flex flex-col items-center justify-center gap-1.5 p-3 border rounded-lg cursor-pointer transition-all ${
                   deliveryMethod === "SHULKER_CHEST"
-                    ? "border-primary bg-primary/5"
-                    : "hover:bg-muted/50"
+                    ? "border-primary bg-primary/10 ring-1 ring-primary"
+                    : "hover:bg-muted/50 hover:border-muted-foreground/30"
                 }`}
               >
-                <RadioGroupItem value="SHULKER_CHEST" className="h-3 w-3" />
-                <Package className="h-3 w-3" />
-                <span className="text-xs">Shulker → Chest</span>
+                <RadioGroupItem value="SHULKER_CHEST" className="sr-only" />
+                <div className="relative">
+                  <Package className={`h-5 w-5 ${deliveryMethod === "SHULKER_CHEST" ? "text-primary" : "text-muted-foreground"}`} />
+                  <Box className={`h-2.5 w-2.5 absolute -bottom-0.5 -right-0.5 ${deliveryMethod === "SHULKER_CHEST" ? "text-primary" : "text-muted-foreground"}`} />
+                </div>
+                <span className={`text-[10px] text-center leading-tight ${deliveryMethod === "SHULKER_CHEST" ? "text-primary font-medium" : "text-muted-foreground"}`}>
+                  Shulker+
+                </span>
               </label>
             </RadioGroup>
           </div>
@@ -468,7 +587,7 @@ export function CreateTaskDialog({
 
           {/* Shulker Options - compact */}
           {isShulkerMethod && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {/* Packing Mode - inline */}
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-medium text-muted-foreground">Packing</Label>
@@ -485,47 +604,94 @@ export function CreateTaskDialog({
                 </div>
               </div>
 
-              {/* Shulkers - compact grid */}
-              <div className="space-y-1">
+              {/* Shulkers - clean color-based selection */}
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-medium text-muted-foreground">
-                    Shulkers ({selectedShulkerIds.length}/{shulkersNeeded})
+                    Select Shulkers
                   </Label>
-                  {selectedShulkerIds.length >= shulkersNeeded && (
-                    <Badge variant="default" className="h-4 text-[10px] px-1.5">Ready</Badge>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {selectedShulkerIds.length} / {shulkersNeeded} needed
+                    </span>
+                    {selectedShulkerIds.length >= shulkersNeeded && (
+                      <Badge variant="default" className="h-5 text-[10px] px-2">
+                        <Check className="h-3 w-3 mr-1" />
+                        Ready
+                      </Badge>
+                    )}
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-1 p-1.5 border rounded bg-muted/20 min-h-[40px]">
-                  {emptyShulkers?.map((shulker: any) => (
-                    <Tooltip key={shulker.id}>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={() => toggleShulkerSelection(shulker.id)}
-                          className={`w-8 h-8 rounded flex items-center justify-center transition-all ${
-                            selectedShulkerIds.includes(shulker.id)
-                              ? "ring-1 ring-primary bg-primary/10"
-                              : "bg-muted/50 hover:bg-muted"
+                
+                {shulkersByColor.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-6 border rounded-lg bg-muted/10">
+                    <Package className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                    <p className="text-sm text-muted-foreground">No empty shulkers</p>
+                    <p className="text-xs text-muted-foreground/60">Add empty shulker boxes to your storage</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-4 gap-2">
+                    {shulkersByColor.map((colorGroup) => {
+                      const selectedCount = selectedShulkersByColor.get(colorGroup.itemId) || 0;
+                      const totalAvailable = colorGroup.shulkers.length;
+                      const isSelected = selectedCount > 0;
+                      
+                      return (
+                        <div
+                          key={colorGroup.itemId}
+                          className={`relative flex flex-col items-center p-2 border rounded-lg transition-all ${
+                            isSelected
+                              ? "border-primary bg-primary/5 ring-1 ring-primary/50"
+                              : "hover:bg-muted/50 hover:border-muted-foreground/30"
                           }`}
                         >
-                          <ItemIcon
-                            itemId={shulker.itemId}
-                            itemName={shulker.itemName}
-                            size={24}
-                            version={serverVersion}
-                          />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        {shulker.itemName}
-                      </TooltipContent>
-                    </Tooltip>
-                  ))}
-                  {(!emptyShulkers || emptyShulkers.length === 0) && (
-                    <span className="text-[10px] text-muted-foreground p-1">
-                      No empty shulkers found
-                    </span>
-                  )}
-                </div>
+                          {/* Shulker Icon - click to toggle */}
+                          <button
+                            onClick={() => toggleShulkerColor(colorGroup)}
+                            className="flex flex-col items-center gap-1 w-full"
+                          >
+                            <div className="relative">
+                              <ItemIcon
+                                itemId={colorGroup.itemId}
+                                itemName={colorGroup.itemName}
+                                size={32}
+                                version={serverVersion}
+                              />
+                              {isSelected && (
+                                <div className="absolute -top-1 -right-1 w-4 h-4 bg-primary rounded flex items-center justify-center">
+                                  <Check className="h-2.5 w-2.5 text-primary-foreground" />
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground">
+                              {totalAvailable} available
+                            </span>
+                          </button>
+                          
+                          {/* Quantity controls - only show when selected */}
+                          {isSelected && (
+                            <div className="flex items-center gap-1 mt-1.5 bg-background/80 rounded border">
+                              <button
+                                onClick={() => removeShulkerOfColor(colorGroup)}
+                                className="h-5 w-5 flex items-center justify-center hover:bg-muted rounded-l transition-colors"
+                              >
+                                <Minus className="h-2.5 w-2.5" />
+                              </button>
+                              <span className="text-xs font-medium w-4 text-center">{selectedCount}</span>
+                              <button
+                                onClick={() => addShulkerOfColor(colorGroup)}
+                                disabled={selectedCount >= totalAvailable}
+                                className="h-5 w-5 flex items-center justify-center hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed rounded-r transition-colors"
+                              >
+                                <Plus className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}

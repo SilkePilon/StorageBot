@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { tasksApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import { getSocket } from "@/lib/socket";
+import { toast } from "sonner";
 
 export function useTasks(botId: string) {
   const token = useAuthStore((state) => state.token);
   const queryClient = useQueryClient();
+  // Track active task toasts by task ID
+  const activeToastsRef = useRef<Map<string, string>>(new Map());
 
   // Listen for real-time task updates
   useEffect(() => {
@@ -25,6 +28,65 @@ export function useTasks(botId: string) {
         if (!old) return old;
         return old.map((t) => (t.id === data.task.id ? data.task : t));
       });
+      
+      // Show/update toast for IN_PROGRESS tasks
+      if (data.task.status === "IN_PROGRESS") {
+        const toastId = `task-${data.task.id}`;
+        activeToastsRef.current.set(data.task.id, toastId);
+        
+        const itemCount = data.task.items?.length || 0;
+        const collectedItems = data.task.collectedItems || 0;
+        const totalItems = data.task.totalItems || 0;
+        
+        toast.loading(
+          `Collecting items... ${collectedItems}/${totalItems}`,
+          {
+            id: toastId,
+            description: data.task.currentStep || "Starting...",
+            duration: Infinity,
+          }
+        );
+      }
+    };
+
+    const handleTaskStep = (data: { taskId: string; step: string }) => {
+      const toastId = activeToastsRef.current.get(data.taskId);
+      if (toastId) {
+        toast.loading(
+          "Processing request...",
+          {
+            id: toastId,
+            description: data.step,
+            duration: Infinity,
+          }
+        );
+      }
+      queryClient.invalidateQueries({ queryKey: ["tasks", botId] });
+    };
+
+    const handleTaskProgress = (data: { taskId: string; itemId?: string; collected?: number; remaining?: number }) => {
+      const toastId = activeToastsRef.current.get(data.taskId);
+      if (toastId && data.itemId) {
+        // Get current task data to show better progress
+        const tasks = queryClient.getQueryData<any[]>(["tasks", botId]);
+        const task = tasks?.find((t) => t.id === data.taskId);
+        
+        if (task) {
+          const collectedItems = (task.collectedItems || 0) + (data.collected || 0);
+          const totalItems = task.totalItems || 0;
+          const progress = totalItems > 0 ? Math.round((collectedItems / totalItems) * 100) : 0;
+          
+          toast.loading(
+            `Collecting items... ${progress}%`,
+            {
+              id: toastId,
+              description: `${collectedItems}/${totalItems} items collected`,
+              duration: Infinity,
+            }
+          );
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ["tasks", botId] });
     };
 
     const handleTaskCompleted = (data: { task: any }) => {
@@ -32,13 +94,35 @@ export function useTasks(botId: string) {
         if (!old) return old;
         return old.map((t) => (t.id === data.task.id ? data.task : t));
       });
+      
+      // Dismiss loading toast and show success
+      const toastId = activeToastsRef.current.get(data.task.id);
+      if (toastId) {
+        toast.success("Request completed!", {
+          id: toastId,
+          description: `Delivered ${data.task.collectedItems || 0} items`,
+          duration: 4000,
+        });
+        activeToastsRef.current.delete(data.task.id);
+      }
     };
 
-    const handleTaskFailed = (data: { task: any }) => {
+    const handleTaskFailed = (data: { task: any; error?: string }) => {
       queryClient.setQueryData(["tasks", botId], (old: any[] | undefined) => {
         if (!old) return old;
         return old.map((t) => (t.id === data.task.id ? data.task : t));
       });
+      
+      // Dismiss loading toast and show error
+      const toastId = activeToastsRef.current.get(data.task.id);
+      if (toastId) {
+        toast.error("Request failed", {
+          id: toastId,
+          description: data.error || data.task.errorMessage || "Unknown error",
+          duration: 5000,
+        });
+        activeToastsRef.current.delete(data.task.id);
+      }
     };
 
     const handleTaskDeleted = (data: { taskId: string }) => {
@@ -46,10 +130,13 @@ export function useTasks(botId: string) {
         if (!old) return old;
         return old.filter((t) => t.id !== data.taskId);
       });
-    };
-
-    const handleTaskProgress = (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["tasks", botId] });
+      
+      // Dismiss any active toast for deleted task
+      const toastId = activeToastsRef.current.get(data.taskId);
+      if (toastId) {
+        toast.dismiss(toastId);
+        activeToastsRef.current.delete(data.taskId);
+      }
     };
 
     socket.on("task:created", handleTaskCreated);
@@ -58,7 +145,7 @@ export function useTasks(botId: string) {
     socket.on("task:failed", handleTaskFailed);
     socket.on("task:deleted", handleTaskDeleted);
     socket.on("task:progress", handleTaskProgress);
-    socket.on("task:step", handleTaskProgress);
+    socket.on("task:step", handleTaskStep);
     socket.on("task:shulkerFilled", handleTaskProgress);
 
     return () => {
@@ -68,8 +155,14 @@ export function useTasks(botId: string) {
       socket.off("task:failed", handleTaskFailed);
       socket.off("task:deleted", handleTaskDeleted);
       socket.off("task:progress", handleTaskProgress);
-      socket.off("task:step", handleTaskProgress);
+      socket.off("task:step", handleTaskStep);
       socket.off("task:shulkerFilled", handleTaskProgress);
+      
+      // Dismiss any active loading toasts on cleanup to prevent orphaned toasts
+      activeToastsRef.current.forEach((toastId) => {
+        toast.dismiss(toastId);
+      });
+      activeToastsRef.current.clear();
     };
   }, [token, botId, queryClient]);
 
