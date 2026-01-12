@@ -335,7 +335,100 @@ export class StorageBotInstance extends BaseBotInstance {
   
   // Minimum delay between container opens (workaround for mineflayer issue #3360)
   // After a player disconnects, server needs time to process block interactions
-  private static readonly CONTAINER_OPEN_COOLDOWN_MS = 1000;
+  private static readonly CONTAINER_OPEN_COOLDOWN_MS = 1500;
+
+  /**
+   * Custom container opening with multiple activation attempts.
+   * Mineflayer's openContainer has a hardcoded 20s timeout and only activates once.
+   * This method activates the block multiple times while waiting for windowOpen.
+   */
+  private async openContainerWithRetry(block: any, timeoutMs: number = 30000): Promise<any> {
+    if (!this.bot) throw new Error('Bot not connected');
+
+    return new Promise(async (resolve, reject) => {
+      let resolved = false;
+      let activationAttempts = 0;
+      const maxActivations = 5;
+      let activationInterval: NodeJS.Timeout | null = null;
+
+      // Handler for when window opens
+      const onWindowOpen = (window: any) => {
+        if (resolved) return;
+        resolved = true;
+        if (activationInterval) clearInterval(activationInterval);
+        this.lastContainerOpenTime = Date.now();
+        console.log(`[Bot ${this.id}] Container opened after ${activationAttempts} activation(s)`);
+        resolve(window);
+      };
+
+      // Set up the listener
+      this.bot!.once('windowOpen', onWindowOpen);
+
+      // Timeout handler
+      const timeoutId = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        if (activationInterval) clearInterval(activationInterval);
+        this.bot!.removeListener('windowOpen', onWindowOpen);
+        reject(new Error(`Container did not open within ${timeoutMs}ms after ${activationAttempts} activations`));
+      }, timeoutMs);
+
+      // Function to attempt activation
+      const tryActivate = async () => {
+        if (resolved || activationAttempts >= maxActivations) return;
+        
+        activationAttempts++;
+        console.log(`[Bot ${this.id}] Activation attempt ${activationAttempts}/${maxActivations}`);
+        
+        try {
+          // Re-fetch block to ensure fresh state
+          const freshBlock = this.bot!.blockAt(block.position);
+          if (!freshBlock) {
+            console.warn(`[Bot ${this.id}] Block not found at position, skipping activation`);
+            return;
+          }
+
+          // Look at block center
+          const blockCenter = freshBlock.position.offset(0.5, 0.5, 0.5);
+          await this.bot!.lookAt(blockCenter, true);
+          await this.bot!.waitForTicks(2);
+          
+          // Sneak before interacting (helps with some servers)
+          this.bot!.setControlState('sneak', true);
+          await this.sleep(100);
+          
+          // Activate the block
+          await this.bot!.activateBlock(freshBlock);
+          
+          // Release sneak
+          await this.sleep(50);
+          this.bot!.setControlState('sneak', false);
+          
+        } catch (err: any) {
+          console.warn(`[Bot ${this.id}] Activation attempt ${activationAttempts} error: ${err.message}`);
+        }
+      };
+
+      // First activation attempt
+      await tryActivate();
+
+      // If not resolved, try activating again every 3 seconds
+      if (!resolved) {
+        activationInterval = setInterval(async () => {
+          if (resolved) {
+            if (activationInterval) clearInterval(activationInterval);
+            return;
+          }
+          await tryActivate();
+        }, 3000);
+      }
+
+      // Clean up timeout on success
+      this.bot!.once('windowOpen', () => {
+        clearTimeout(timeoutId);
+      });
+    });
+  }
 
   /**
    * Safely open a container block with proper lookAt, cooldown, and retry logic.
@@ -358,7 +451,6 @@ export class StorageBotInstance extends BaseBotInstance {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Re-fetch the block to ensure we have the latest state
-        // This helps when chunks have been reloaded
         const freshBlock = await this.getBlockWithChunkWait(
           block.position.x, 
           block.position.y, 
@@ -368,26 +460,26 @@ export class StorageBotInstance extends BaseBotInstance {
         // Calculate the center of the block for looking
         const blockCenter = freshBlock.position.offset(0.5, 0.5, 0.5);
         
-        // Look at the block center - this is crucial for Minecraft to accept the interaction
+        // Look at the block center
         await this.bot.lookAt(blockCenter, true);
-        await this.bot.waitForTicks(3); // Wait for physics to sync
+        await this.bot.waitForTicks(5);
         
-        // Delay to ensure server receives the look packet and is ready for interaction
-        // This is critical for ViaVersion/ViaBackwards servers which add latency
-        await this.sleep(150);
+        // Longer delay for ViaVersion/Raspberry Pi latency
+        await this.sleep(300);
         
         // Ensure we're not holding any item that could interfere
-        await this.bot.unequip('hand');
-        await this.sleep(50);
+        try {
+          await this.bot.unequip('hand');
+        } catch {
+          // Ignore unequip errors
+        }
+        await this.sleep(100);
         
-        // Open the container
-        const container = await this.bot.openContainer(freshBlock);
-        
-        // Record successful open time for cooldown tracking
-        this.lastContainerOpenTime = Date.now();
+        // Use our custom opener with multiple activations
+        const container = await this.openContainerWithRetry(freshBlock, 25000);
         
         // Give the window time to populate its items
-        await this.sleep(150);
+        await this.sleep(200);
         
         return container;
       } catch (error: any) {
@@ -395,32 +487,35 @@ export class StorageBotInstance extends BaseBotInstance {
         console.warn(`[Bot ${this.id}] Attempt ${attempt}/${maxRetries} to open container failed: ${errorMsg}`);
         
         if (attempt < maxRetries) {
-          // Wait longer between retries - use 1 second base (issue #3360 fix)
-          const retryDelay = 1000 * attempt;
+          // Wait longer between retries - 2 seconds for Raspberry Pi
+          const retryDelay = 2000 * attempt;
           console.log(`[Bot ${this.id}] Retrying in ${retryDelay}ms...`);
           await this.sleep(retryDelay);
           
-          // Move slightly to reset any stuck state
-          if (attempt >= 2 && this.bot.entity) {
+          // Move away and back to reset server-side state
+          if (this.bot.entity) {
             const currentPos = this.bot.entity.position;
             try {
+              // Move 2 blocks away
               await this.bot.pathfinder.goto(new goals.GoalNear(
-                currentPos.x + (Math.random() - 0.5),
-                currentPos.y,
-                currentPos.z + (Math.random() - 0.5),
-                0.5
+                block.position.x + 3,
+                block.position.y,
+                block.position.z,
+                1
               ));
+              await this.sleep(500);
+              // Move back
+              await this.bot.pathfinder.goto(new goals.GoalNear(
+                block.position.x,
+                block.position.y,
+                block.position.z,
+                3
+              ));
+              await this.sleep(500);
             } catch {
               // Ignore movement errors during retry
             }
-            await this.sleep(200);
           }
-          
-          // Try to look at the block again from a slightly different angle
-          const offset = (attempt - 1) * 0.1;
-          const blockPos = block.position.offset(0.5 + offset, 0.5, 0.5 - offset);
-          await this.bot.lookAt(blockPos, true);
-          await this.bot.waitForTicks(5);
         } else {
           throw new Error(`Failed to open container after ${maxRetries} attempts: ${errorMsg}`);
         }
