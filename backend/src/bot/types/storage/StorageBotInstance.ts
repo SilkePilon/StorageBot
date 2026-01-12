@@ -282,6 +282,55 @@ export class StorageBotInstance extends BaseBotInstance {
   }
 
   /**
+   * Get a block at a position, waiting for the chunk to load if necessary.
+   * This is crucial for when players disconnect and chunks become unloaded.
+   */
+  private async getBlockWithChunkWait(x: number, y: number, z: number, maxWaitMs: number = 10000): Promise<any> {
+    if (!this.bot) throw new Error('Bot not connected');
+
+    const pos = new Vec3(x, y, z);
+    
+    // First, try to get the block directly
+    let block = this.bot.blockAt(pos);
+    if (block) return block;
+
+    // Block not loaded - need to move closer and wait for chunk to load
+    console.log(`[Bot ${this.id}] Block at ${x}, ${y}, ${z} not loaded, moving closer and waiting for chunk...`);
+    
+    // Move to the area to trigger chunk loading
+    try {
+      await this.moveToBlock(x, y, z);
+    } catch (moveError) {
+      // Pathfinding might fail if chunks aren't loaded, but let's try waiting anyway
+      console.warn(`[Bot ${this.id}] Pathfinding failed, waiting for chunks to load...`);
+    }
+
+    // Wait for chunks to load
+    try {
+      await this.bot.waitForChunksToLoad();
+    } catch (e) {
+      // Ignore timeout errors
+    }
+
+    // Try to get the block again after waiting
+    block = this.bot.blockAt(pos);
+    if (block) return block;
+
+    // Still not loaded - poll with timeout
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWaitMs) {
+      await this.sleep(500);
+      block = this.bot.blockAt(pos);
+      if (block) {
+        console.log(`[Bot ${this.id}] Block at ${x}, ${y}, ${z} loaded after ${Date.now() - startTime}ms`);
+        return block;
+      }
+    }
+
+    throw new Error(`Block at ${x}, ${y}, ${z} not loaded after ${maxWaitMs}ms - chunk may be unloaded by server`);
+  }
+
+  /**
    * Safely open a container block with proper lookAt and retry logic.
    * This is the core method for opening chests/barrels/shulkers reliably.
    */
@@ -332,8 +381,8 @@ export class StorageBotInstance extends BaseBotInstance {
   private async openAndReadChest(x: number, y: number, z: number): Promise<any[]> {
     if (!this.bot) throw new Error('Bot not connected');
 
-    const block = this.bot.blockAt(new Vec3(x, y, z));
-    if (!block) throw new Error('Block not found');
+    // Get block with chunk loading wait - this handles cases where chunks are unloaded
+    const block = await this.getBlockWithChunkWait(x, y, z);
 
     await this.moveToBlock(x, y, z);
     await this.sleep(150);
@@ -656,11 +705,11 @@ export class StorageBotInstance extends BaseBotInstance {
       await this.updateTaskStep(task.id, `Opening chest at ${chestPlan.x}, ${chestPlan.y}, ${chestPlan.z}...`);
 
       try {
+        // Get block with chunk loading wait - handles cases where chunks are unloaded after player disconnect
+        const block = await this.getBlockWithChunkWait(chestPlan.x, chestPlan.y, chestPlan.z);
+
         await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
         await this.sleep(150);
-
-        const block = this.bot!.blockAt(new Vec3(chestPlan.x, chestPlan.y, chestPlan.z));
-        if (!block) continue;
 
         const chest = await this.safeOpenContainer(block);
 
@@ -789,6 +838,13 @@ export class StorageBotInstance extends BaseBotInstance {
           await this.bot!.equip(shulkerInInventory, 'hand');
           await this.sleep(100);
 
+          // Wait for chunks to be loaded before trying to access nearby blocks
+          try {
+            await this.bot!.waitForChunksToLoad();
+          } catch (e) {
+            // Ignore timeout
+          }
+
           const referenceBlock = this.bot!.blockAt(placePos.offset(0, -1, 0));
           if (referenceBlock) {
             try {
@@ -799,6 +855,8 @@ export class StorageBotInstance extends BaseBotInstance {
             }
           }
 
+          // Wait briefly for the placed block to register
+          await this.sleep(100);
           const placedShulker = this.bot!.blockAt(placePos);
           if (placedShulker?.name.includes('shulker_box')) {
             const shulkerContainer = await this.safeOpenContainer(placedShulker);
@@ -1045,14 +1103,18 @@ export class StorageBotInstance extends BaseBotInstance {
       const shulkerItem = shulkerItems[shulkerIndex];
       await this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length}...`);
 
-      await this.moveToBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
-      await this.sleep(150);
-
-      const chestBlock = this.bot!.blockAt(new Vec3(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z));
-      if (!chestBlock) {
+      // Get block with chunk loading wait - handles cases where chunks are unloaded after player disconnect
+      let chestBlock;
+      try {
+        chestBlock = await this.getBlockWithChunkWait(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
+      } catch (e) {
+        console.warn(`[Bot ${this.id}] Could not access chest at ${shulkerItem.chest.x}, ${shulkerItem.chest.y}, ${shulkerItem.chest.z}:`, e);
         shulkerIndex++;
         continue;
       }
+
+      await this.moveToBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
+      await this.sleep(150);
 
       const chest = await this.safeOpenContainer(chestBlock);
 
@@ -1087,6 +1149,13 @@ export class StorageBotInstance extends BaseBotInstance {
       await this.bot!.equip(shulkerInInv, 'hand');
       await this.sleep(100);
 
+      // Wait for chunks to be loaded before trying to access nearby blocks
+      try {
+        await this.bot!.waitForChunksToLoad();
+      } catch (e) {
+        // Ignore timeout
+      }
+
       const referenceBlock = this.bot!.blockAt(placePos.offset(0, -1, 0));
       if (!referenceBlock) {
         shulkerIndex++;
@@ -1102,6 +1171,8 @@ export class StorageBotInstance extends BaseBotInstance {
         continue;
       }
 
+      // Wait briefly for the placed block to register
+      await this.sleep(100);
       const placedShulker = this.bot!.blockAt(placePos);
       if (!placedShulker || !placedShulker.name.includes('shulker_box')) {
         shulkerIndex++;
@@ -1149,6 +1220,8 @@ export class StorageBotInstance extends BaseBotInstance {
       shulkerContainer.close();
       await this.sleep(300);
 
+      // Wait briefly for block state to sync after closing container
+      await this.sleep(100);
       const shulkerToBreak = this.bot!.blockAt(placePos);
       if (shulkerToBreak?.name.includes('shulker_box')) {
         await this.bot!.dig(shulkerToBreak);

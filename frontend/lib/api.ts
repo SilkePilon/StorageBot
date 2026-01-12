@@ -104,6 +104,12 @@ export const botsApi = {
   getAuthStatus: (token: string, id: string) =>
     fetchApi<any>(`/api/bots/${id}/auth/status`, { token }),
 
+  forceReauth: (token: string, id: string) =>
+    fetchApi<any>(`/api/bots/${id}/auth/reauth`, {
+      method: "POST",
+      token,
+    }),
+
   connect: (
     token: string,
     id: string,

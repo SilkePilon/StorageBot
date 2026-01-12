@@ -342,6 +342,40 @@ router.get('/:id/auth/status', async (req: AuthRequest, res) => {
   }
 });
 
+// Force re-authenticate (clears cache and starts fresh auth)
+router.post('/:id/auth/reauth', async (req: AuthRequest, res) => {
+  try {
+    const bot = await prisma.bot.findFirst({
+      where: {
+        id: req.params.id,
+        userId: req.userId,
+      },
+    });
+
+    if (!bot) {
+      res.status(404).json({ error: 'Bot not found' });
+      return;
+    }
+
+    if (bot.useOfflineAccount) {
+      res.status(400).json({ error: 'Offline accounts do not require re-authentication' });
+      return;
+    }
+
+    if (!bot.microsoftEmail) {
+      res.status(400).json({ error: 'Microsoft email not configured' });
+      return;
+    }
+
+    const result = await BotManager.getInstance().forceReauthenticate(bot.id, req.userId!);
+
+    res.json(result);
+  } catch (error) {
+    console.error('Re-auth error:', error);
+    res.status(500).json({ error: 'Failed to start re-authentication' });
+  }
+});
+
 // Connect bot to server
 router.post('/:id/connect', async (req: AuthRequest, res) => {
   try {

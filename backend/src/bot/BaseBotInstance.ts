@@ -2,6 +2,7 @@ import mineflayer, { Bot } from 'mineflayer';
 import { pathfinder, Movements, goals } from 'mineflayer-pathfinder';
 import { Vec3 } from 'vec3';
 import { EventEmitter } from 'events';
+import minecraftData from 'minecraft-data';
 import { prisma } from '../lib/prisma.js';
 import { emitToBot } from '../lib/socket.js';
 
@@ -17,6 +18,7 @@ export interface BotStatus {
   gameMode?: string;
   serverVersion?: string;
   currentAction?: string;
+  effects?: { id: number; name: string; amplifier: number; duration: number }[];
   // Type-specific status fields can be added by subclasses
   [key: string]: any;
 }
@@ -119,6 +121,30 @@ export abstract class BaseBotInstance extends EventEmitter {
       return { connected: false, spawned: false };
     }
 
+    // Get active effects from the bot entity using minecraft-data for proper names
+    let effects: { id: number; name: string; amplifier: number; duration: number }[] = [];
+    if (this.bot.entity?.effects) {
+      // Get minecraft-data for the bot's version
+      const mcData = minecraftData(this.bot.version);
+      const effectsById = mcData?.effectsArray || [];
+      
+      effects = Object.entries(this.bot.entity.effects).map(([id, effect]: [string, any]) => {
+        const effectId = parseInt(id);
+        // Look up the effect name from minecraft-data
+        const effectData = effectsById.find((e: any) => e.id === effectId);
+        // Convert PascalCase to snake_case (e.g., "FireResistance" -> "fire_resistance")
+        let name = effectData?.name || effect.name || `effect_${id}`;
+        name = name.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '');
+        
+        return {
+          id: effectId,
+          name,
+          amplifier: effect.amplifier || 0,
+          duration: effect.duration || 0,
+        };
+      });
+    }
+
     return {
       connected: this.status.connected,
       spawned: this.status.spawned,
@@ -135,6 +161,7 @@ export abstract class BaseBotInstance extends EventEmitter {
       gameMode: this.bot.game?.gameMode,
       serverVersion: this.bot.version,
       currentAction: this.status.currentAction,
+      effects,
       // Merge in type-specific status
       ...this.getTypeSpecificStatus(),
     };

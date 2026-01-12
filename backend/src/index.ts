@@ -86,6 +86,9 @@ app.use('/api/workflows', workflowsRoutes);
 // Initialize workflows
 initializeWorkflowNodes();
 
+// Initialize BotManager (starts proactive token refresh scheduler)
+BotManager.getInstance();
+
 // Initialize workflow engine with error handling
 (async () => {
   try {

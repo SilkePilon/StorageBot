@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useDebounce } from "use-debounce";
-import { useBots, useConnectBot, useDisconnectBot, useDeleteBot, useSetBotVisibility, usePublicBots } from "@/hooks/use-bots";
+import { useBots, useConnectBot, useDisconnectBot, useDeleteBot, useSetBotVisibility, usePublicBots, useForceReauth } from "@/hooks/use-bots";
 import { useStorageSystems, useStorageItems, useStartIndexing, useStopIndexing, useStorageStats } from "@/hooks/use-storage";
 import { useBotStore } from "@/stores/bot-store";
 import { useSocket } from "@/hooks/use-socket";
@@ -16,6 +16,7 @@ import { StorageStats, StorageStatsSkeleton } from "@/components/storage-stats";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
 import { TaskList } from "@/components/task-list";
 import { ShulkerToggleButton } from "@/components/shulker-toggle-button";
+import { StatusEffectBadge } from "@/components/status-effect-icon";
 import { toast } from "sonner";
 import {
   Bot,
@@ -46,6 +47,7 @@ import {
   Check,
   ClipboardList,
   Square,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -157,6 +159,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   const disconnectBot = useDisconnectBot();
   const deleteBot = useDeleteBot();
   const setVisibility = useSetBotVisibility();
+  const forceReauth = useForceReauth();
   const queryClient = useQueryClient();
   
   const isOpen = expandedBotId === bot.id;
@@ -438,7 +441,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                   }`}
                 />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm truncate">{bot.name}</span>
                   <Badge
@@ -466,6 +469,58 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                   </span>
                 </div>
               </div>
+              
+              {/* Stats badges - shown when online, 2x stacked vertically, left aligned after bot info */}
+              {isOnline && status && (
+                <div className="hidden sm:flex items-center gap-1.5">
+                  {/* 2x stacked stats */}
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1">
+                      <Badge variant="outline" className="gap-1 py-0 h-4 text-[9px] px-1">
+                        <Heart className="h-2.5 w-2.5" />
+                        <span className="font-mono">{status.health?.toFixed(0) || 0}/20</span>
+                      </Badge>
+                      <Badge variant="outline" className="gap-1 py-0 h-4 text-[9px] px-1">
+                        <Apple className="h-2.5 w-2.5" />
+                        <span className="font-mono">{status.food?.toFixed(0) || 0}/20</span>
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Badge variant="outline" className="gap-1 py-0 h-4 text-[9px] px-1">
+                        <MapPin className="h-2.5 w-2.5" />
+                        <span className="font-mono">
+                          {status.position
+                            ? `${status.position.x}, ${status.position.y}, ${status.position.z}`
+                            : "?"}
+                        </span>
+                      </Badge>
+                      <Badge variant="outline" className="gap-1 py-0 h-4 text-[9px] px-1 max-w-[60px]">
+                        <span className="truncate">{status.currentAction || "Idle"}</span>
+                      </Badge>
+                    </div>
+                  </div>
+                  
+                  {/* Status effect icons - simple icon-only badges */}
+                  {status.effects && status.effects.length > 0 && (
+                    <div className="flex items-center gap-0.5">
+                      {status.effects.slice(0, 6).map((effect: any, idx: number) => (
+                        <StatusEffectBadge
+                          key={`${effect.id}-${idx}`}
+                          effectId={effect.id}
+                          effectName={effect.name}
+                          amplifier={effect.amplifier}
+                          duration={effect.duration}
+                        />
+                      ))}
+                      {status.effects.length > 6 && (
+                        <span className="text-[10px] text-muted-foreground ml-0.5">
+                          +{status.effects.length - 6}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </button>
           </CollapsibleTrigger>
           
@@ -550,6 +605,23 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                       </>
                     )}
                   </DropdownMenuItem>
+                  {/* Re-authenticate - only show for Microsoft auth bots */}
+                  {!bot.useOfflineAccount && bot.microsoftEmail && (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        forceReauth.mutate(bot.id, {
+                          onSuccess: () => {
+                            toast.success("Re-authentication started. Check for MSA code popup.");
+                          },
+                          onError: (error) => toast.error(error.message),
+                        });
+                      }}
+                      disabled={forceReauth.isPending}
+                    >
+                      <KeyRound className="mr-2 h-4 w-4" />
+                      {forceReauth.isPending ? "Re-authenticating..." : "Re-authenticate"}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
@@ -615,9 +687,9 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
         {/* Expanded Content */}
         <CollapsibleContent>
           <div className="border-t px-3 py-3 space-y-3 bg-muted/20">
-            {/* Status badges when online */}
+            {/* Mobile stats badges - only shown inside collapsible on small screens */}
             {isOnline && status && (
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap sm:hidden">
                 <Badge variant="outline" className="gap-1.5 py-1">
                   <Heart className="h-3 w-3" />
                   <span className="font-mono text-xs">{status.health?.toFixed(0) || 0}/20</span>
@@ -638,6 +710,24 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                   <Server className="h-3 w-3" />
                   <span className="text-xs">{status.currentAction || "Idle"}</span>
                 </Badge>
+                {status.effects && status.effects.length > 0 && (
+                  <div className="flex items-center gap-0.5">
+                    {status.effects.slice(0, 4).map((effect: any, idx: number) => (
+                      <StatusEffectBadge
+                        key={`${effect.id}-${idx}`}
+                        effectId={effect.id}
+                        effectName={effect.name}
+                        amplifier={effect.amplifier}
+                        duration={effect.duration}
+                      />
+                    ))}
+                    {status.effects.length > 4 && (
+                      <span className="text-[10px] text-muted-foreground ml-0.5">
+                        +{status.effects.length - 4}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1084,11 +1174,30 @@ export default function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ["bots"] });
     };
 
+    const handleAuthExpired = (data: { botId: string; error: string; requiresReauth: boolean }) => {
+      queryClient.invalidateQueries({ queryKey: ["bots"] });
+      toast.error(`Authentication expired for bot. Please re-authenticate.`, {
+        description: data.error?.substring(0, 100),
+        action: {
+          label: "View",
+          onClick: () => {},
+        },
+      });
+    };
+
+    const handleTokenRefreshed = (data: { botId: string; success: boolean }) => {
+      if (data.success) {
+        console.log(`Token refreshed for bot ${data.botId}`);
+      }
+    };
+
     socket.on("bot:connected", handleBotConnected);
     socket.on("bot:connectionFailed", handleBotConnectionFailed);
     socket.on("bot:status", handleBotConnected); // Status updates may indicate connect/disconnect
     socket.on("storage:indexComplete", handleIndexComplete);
     socket.on("bot:authComplete", handleAuthComplete);
+    socket.on("bot:authExpired", handleAuthExpired);
+    socket.on("bot:tokenRefreshed", handleTokenRefreshed);
 
     return () => {
       socket.off("bot:connected", handleBotConnected);
@@ -1096,6 +1205,8 @@ export default function DashboardPage() {
       socket.off("bot:status", handleBotConnected);
       socket.off("storage:indexComplete", handleIndexComplete);
       socket.off("bot:authComplete", handleAuthComplete);
+      socket.off("bot:authExpired", handleAuthExpired);
+      socket.off("bot:tokenRefreshed", handleTokenRefreshed);
     };
   }, [socket, queryClient]);
 

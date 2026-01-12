@@ -125,7 +125,8 @@
 }
 
 /* Minecraft item textures - crisp pixel art rendering */
-.minecraft-item {
+.minecraft-item,
+.pixelated {
   image-rendering: pixelated !important;
   image-rendering: -moz-crisp-edges !important;
   image-rendering: crisp-edges !important;

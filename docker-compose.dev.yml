@@ -34,6 +34,10 @@ services:
       dockerfile: backend/Dockerfile.dev
     container_name: storagebot-backend
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-storagebot}:${POSTGRES_PASSWORD:-storagebot_secret}@postgres:5432/${POSTGRES_DB:-storagebot}?schema=public
       JWT_SECRET: ${JWT_SECRET:-dev-fallback-secret-not-for-production}
