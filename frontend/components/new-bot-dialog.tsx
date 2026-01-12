@@ -3,12 +3,14 @@
 import { useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBotTypes } from "@/hooks/use-bots";
 import { toast } from "sonner";
-import { Bot, Loader2, ChevronDown, ChevronUp, Wifi, CheckCircle2 } from "lucide-react";
+import { Bot, Loader2, ChevronDown, ChevronUp, Wifi, CheckCircle2, Package, Wheat, Sword, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +25,15 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
+// Icon mapping for bot types
+const BOT_TYPE_ICON_MAP: Record<string, React.ElementType> = {
+  Package: Package,
+  Wheat: Wheat,
+  Sword: Sword,
+  Hammer: Hammer,
+  Bot: Bot,
+};
+
 interface NewBotDialogProps {
   children: React.ReactNode;
   onSuccess?: (bot: any) => void;
@@ -31,8 +42,10 @@ interface NewBotDialogProps {
 export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
   const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
+  const { data: botTypes, isLoading: typesLoading } = useBotTypes();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [selectedType, setSelectedType] = useState<string>("storage");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [useOfflineAccount, setUseOfflineAccount] = useState(false);
   const [offlineUsername, setOfflineUsername] = useState("");
@@ -43,6 +56,7 @@ export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
 
   const resetForm = () => {
     setName("");
+    setSelectedType("storage");
     setShowAdvanced(false);
     setUseOfflineAccount(false);
     setOfflineUsername("");
@@ -97,6 +111,7 @@ export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
         },
         body: JSON.stringify({
           name: name.trim(),
+          botType: selectedType,
           useOfflineAccount,
           offlineUsername: useOfflineAccount ? offlineUsername.trim() : undefined,
         }),
@@ -151,7 +166,7 @@ export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
                 New Bot
               </DialogTitle>
               <DialogDescription>
-                Create a new storage bot. You&apos;ll configure it after creation.
+                Create a new bot. You&apos;ll configure it after creation.
               </DialogDescription>
             </DialogHeader>
 
@@ -169,6 +184,55 @@ export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
                   className="h-9"
                   autoFocus
                 />
+              </div>
+
+              {/* Bot Type Selection */}
+              <div className="space-y-2">
+                <Label className="text-sm">Bot Type</Label>
+                {typesLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading bot types...
+                  </div>
+                ) : (
+                  <div className="grid gap-2">
+                    {botTypes?.map((type) => {
+                      const IconComponent = BOT_TYPE_ICON_MAP[type.icon] || Bot;
+                      const isSelected = selectedType === type.type;
+                      return (
+                        <button
+                          key={type.type}
+                          type="button"
+                          onClick={() => setSelectedType(type.type)}
+                          className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-colors ${
+                            isSelected
+                              ? "border-primary bg-primary/5"
+                              : "border-muted hover:border-muted-foreground/30 hover:bg-muted/50"
+                          }`}
+                        >
+                          <div className={`p-2 rounded-md ${isSelected ? "bg-primary/10" : "bg-muted"}`}>
+                            <IconComponent className={`h-4 w-4 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-medium text-sm ${isSelected ? "text-primary" : ""}`}>
+                                {type.name}
+                              </span>
+                              {isSelected && (
+                                <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                                  Selected
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                              {type.description}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Advanced Options */}

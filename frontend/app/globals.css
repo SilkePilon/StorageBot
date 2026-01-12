@@ -137,3 +137,73 @@
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
 }
+
+/* React Flow edge styles - smooth bezier curves */
+.react-flow__edge-path {
+  stroke-width: 2px !important;
+  stroke: #666 !important;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 5 5;
+  animation: edge-dash 0.5s linear infinite;
+}
+
+@keyframes edge-dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+/* Workflow node running animation - striped border */
+.workflow-node-running {
+  position: relative;
+  border-color: transparent !important;
+  background-clip: padding-box;
+}
+
+.workflow-node-running::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  z-index: -1;
+  border-radius: 10px;
+  background: linear-gradient(
+    90deg,
+    #3b82f6 0%,
+    #3b82f6 25%,
+    transparent 25%,
+    transparent 50%,
+    #3b82f6 50%,
+    #3b82f6 75%,
+    transparent 75%,
+    transparent 100%
+  );
+  background-size: 20px 20px;
+  animation: running-border 0.5s linear infinite;
+}
+
+/* Workflow node waiting animation - pulsing yellow border */
+.workflow-node-waiting {
+  position: relative;
+  border-color: #eab308 !important;
+  animation: waiting-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes waiting-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(234, 179, 8, 0);
+  }
+}
+
+@keyframes running-border {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 20px 0;
+  }
+}

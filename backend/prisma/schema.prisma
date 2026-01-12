@@ -14,6 +14,7 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   bots      Bot[]
+  workflows Workflow[]
 }
 
 model Bot {
@@ -21,6 +22,10 @@ model Bot {
   name            String
   userId          String
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Bot type - determines behavior and available features
+  // Immutable after creation (must delete and recreate to change type)
+  botType         String   @default("storage")
 
   // Server connection
   serverHost      String?
@@ -50,6 +55,7 @@ model Bot {
 
   @@index([userId])
   @@index([isPublic])
+  @@index([botType])
 }
 
 model StorageSystem {
@@ -244,4 +250,119 @@ model RequestItem {
   
   @@index([taskId])
   @@index([status])
+}
+
+// ============ WORKFLOWS ============
+
+enum WorkflowStatus {
+  DRAFT       // Not yet activated
+  ACTIVE      // Ready to run on triggers
+  PAUSED      // Temporarily disabled
+  ARCHIVED    // No longer in use
+}
+
+enum WorkflowExecutionStatus {
+  PENDING     // Waiting to start
+  WAITING     // Waiting for trigger event
+  RUNNING     // Currently executing
+  PAUSED      // Paused mid-execution
+  COMPLETED   // Successfully finished
+  FAILED      // Failed with error
+  CANCELLED   // Cancelled by user
+}
+
+model Workflow {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?
+  status      WorkflowStatus @default(DRAFT)
+  
+  // Workflow definition stored as JSON (nodes, edges, viewport)
+  definition  Json           // { nodes: [], edges: [], viewport: {} }
+  
+  // Trigger configuration (extracted for efficient querying)
+  triggerType String?        // "schedule", "bot_event", "manual", "webhook"
+  triggerConfig Json?        // Trigger-specific configuration
+  
+  // Schedule trigger (cron expression)
+  cronExpression String?
+  nextRunAt      DateTime?
+  
+  // Webhook trigger
+  webhookToken   String?     @unique
+  
+  // Stats
+  lastRunAt      DateTime?
+  runCount       Int         @default(0)
+  successCount   Int         @default(0)
+  failureCount   Int         @default(0)
+  
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  
+  executions  WorkflowExecution[]
+  
+  @@index([userId])
+  @@index([status])
+  @@index([triggerType])
+  @@index([nextRunAt])
+  @@index([webhookToken])
+}
+
+model WorkflowExecution {
+  id          String                  @id @default(uuid())
+  workflowId  String
+  workflow    Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  status      WorkflowExecutionStatus @default(PENDING)
+  
+  // Trigger info
+  triggeredBy String                  // "schedule", "bot_event", "manual", "webhook"
+  triggerData Json?                   // Data from trigger (e.g., bot event payload)
+  
+  // Execution context
+  context     Json                    @default("{}") // Variables, intermediate data
+  currentNodeId String?               // Currently executing node
+  
+  // Results
+  errorMessage String?
+  errorNodeId  String?                // Node that caused the error
+  
+  startedAt   DateTime                @default(now())
+  completedAt DateTime?
+  
+  logs        WorkflowExecutionLog[]
+  
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model WorkflowExecutionLog {
+  id          String            @id @default(uuid())
+  executionId String
+  execution   WorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  
+  nodeId      String            // Node that generated this log
+  nodeName    String?           // Node display name for readability
+  nodeType    String            // Node type (trigger, action, logic, etc.)
+  
+  level       String            @default("info") // "debug", "info", "warn", "error"
+  message     String
+  data        Json?             // Additional structured data
+  
+  // Input/output for debugging
+  inputData   Json?
+  outputData  Json?
+  
+  duration    Int?              // Execution time in ms
+  
+  createdAt   DateTime          @default(now())
+  
+  @@index([executionId])
+  @@index([nodeId])
+  @@index([createdAt])
 }

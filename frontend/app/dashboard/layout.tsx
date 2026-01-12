@@ -50,6 +50,8 @@ export default function DashboardLayout({
   const getPageTitle = () => {
     if (pathname === "/dashboard") return "Dashboard";
     if (pathname.includes("/dashboard/bots/")) return "Bot Details";
+    if (pathname === "/dashboard/workflows") return "Workflows";
+    if (pathname.includes("/dashboard/workflows/")) return "Workflow Editor";
     if (pathname === "/dashboard/settings") return "Settings";
     return "Dashboard";
   };

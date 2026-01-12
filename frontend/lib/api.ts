@@ -62,7 +62,10 @@ export const botsApi = {
   listPublic: (token: string) =>
     fetchApi<any[]>("/api/bots/public", { token }),
 
-  create: (token: string, data: { name: string; useOfflineAccount?: boolean; offlineUsername?: string }) =>
+  getTypes: () =>
+    fetchApi<{ types: any[] }>("/api/bots/types"),
+
+  create: (token: string, data: { name: string; botType?: string; useOfflineAccount?: boolean; offlineUsername?: string }) =>
     fetchApi<any>("/api/bots", {
       method: "POST",
       body: JSON.stringify(data),
@@ -270,4 +273,71 @@ export const tasksApi = {
 
   getEmptyShulkers: (token: string, storageId: string) =>
     fetchApi<any[]>(`/api/tasks/storage/${storageId}/empty-shulkers`, { token }),
+};
+
+// Workflows
+export const workflowsApi = {
+  list: (token: string) =>
+    fetchApi<any[]>("/api/workflows", { token }),
+
+  get: (token: string, id: string) =>
+    fetchApi<any>(`/api/workflows/${id}`, { token }),
+
+  create: (token: string, data: { name: string; description?: string; definition?: any }) =>
+    fetchApi<any>("/api/workflows", {
+      method: "POST",
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  update: (token: string, id: string, data: { name?: string; description?: string; definition?: any; status?: string }) =>
+    fetchApi<any>(`/api/workflows/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  delete: (token: string, id: string) =>
+    fetchApi<void>(`/api/workflows/${id}`, {
+      method: "DELETE",
+      token,
+    }),
+
+  run: (token: string, id: string, input?: any) =>
+    fetchApi<{ executionId: string }>(`/api/workflows/${id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ input }),
+      token,
+    }),
+
+  getExecutions: (token: string, id: string, limit?: number, offset?: number) =>
+    fetchApi<{ executions: any[]; total: number }>(`/api/workflows/${id}/executions?limit=${limit || 20}&offset=${offset || 0}`, { token }),
+
+  getExecution: (token: string, executionId: string) =>
+    fetchApi<any>(`/api/workflows/executions/${executionId}`, { token }),
+
+  cancelExecution: (token: string, executionId: string) =>
+    fetchApi<{ cancelled: boolean }>(`/api/workflows/executions/${executionId}/cancel`, {
+      method: "POST",
+      token,
+    }),
+
+  getNodeTypes: (token: string) =>
+    fetchApi<{ nodes: any[]; events: Record<string, any[]> }>("/api/workflows/nodes/types", { token }),
+
+  export: (token: string, id: string) =>
+    fetchApi<any>(`/api/workflows/${id}/export`, { token }),
+
+  import: (token: string, data: any) =>
+    fetchApi<any>("/api/workflows/import", {
+      method: "POST",
+      body: JSON.stringify(data),
+      token,
+    }),
+
+  duplicate: (token: string, id: string) =>
+    fetchApi<any>(`/api/workflows/${id}/duplicate`, {
+      method: "POST",
+      token,
+    }),
 };

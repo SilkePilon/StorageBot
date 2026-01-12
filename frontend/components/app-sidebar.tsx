@@ -11,6 +11,7 @@ import {
   HelpCircle,
   LogOut,
   Plus,
+  Workflow,
 } from "lucide-react"
 
 import { useAuthStore } from "@/stores/auth-store"
@@ -116,6 +117,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <Link href="/dashboard">
                     <Home className="size-4" />
                     <span>Dashboard</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  tooltip="Workflows"
+                  isActive={pathname?.startsWith("/dashboard/workflows")}
+                >
+                  <Link href="/dashboard/workflows">
+                    <Workflow className="size-4" />
+                    <span>Workflows</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>

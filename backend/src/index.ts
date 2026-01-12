@@ -52,6 +52,11 @@ import authRoutes from './routes/auth.js';
 import botsRoutes from './routes/bots.js';
 import storageRoutes from './routes/storage.js';
 import tasksRoutes from './routes/tasks.js';
+import workflowsRoutes from './routes/workflows.js';
+
+// Workflows
+import { initializeWorkflowNodes } from './workflows/index.js';
+import { workflowEngine } from './workflows/WorkflowEngine.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -76,6 +81,13 @@ app.use('/api/auth', authRoutes);
 app.use('/api/bots', botsRoutes);
 app.use('/api/storage', storageRoutes);
 app.use('/api/tasks', tasksRoutes);
+app.use('/api/workflows', workflowsRoutes);
+
+// Initialize workflows
+initializeWorkflowNodes();
+workflowEngine.initialize().catch(err => {
+  console.error('Failed to initialize workflow engine:', err);
+});
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

@@ -16,6 +16,7 @@ import {
   Box,
   ExternalLink,
   Wifi,
+  Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,19 +48,52 @@ interface SetupBotDialogProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-const getSteps = (useOfflineAccount: boolean) => {
-  if (useOfflineAccount) {
-    return [
-      { id: 1, title: "Server", icon: Server },
-      { id: 2, title: "Storage", icon: MapPin },
-      { id: 3, title: "Index", icon: Box },
-    ];
-  }
+// Icon mapping for step titles
+const STEP_ICONS: Record<string, React.ElementType> = {
+  Auth: Key,
+  Server: Server,
+  Storage: MapPin,
+  "Storage Location": MapPin,
+  Index: Box,
+  "Index Storage": Box,
+};
+
+const getSteps = (useOfflineAccount: boolean, botType: string = 'storage') => {
+  // Base steps - all bots need server connection
+  const baseSteps = useOfflineAccount
+    ? [{ id: 1, title: "Server", icon: Server }]
+    : [
+        { id: 1, title: "Auth", icon: Key },
+        { id: 2, title: "Server", icon: Server },
+      ];
+
+  // Type-specific steps
+  // In the future, these could come from the bot type definition
+  const typeSteps: Record<string, { title: string; icon: React.ElementType }[]> = {
+    storage: [
+      { title: "Storage", icon: MapPin },
+      { title: "Index", icon: Box },
+    ],
+    // Future bot types would have their own steps
+    farming: [
+      { title: "Farm Area", icon: Package },
+      { title: "Crops", icon: Package },
+    ],
+    pvp: [
+      { title: "Combat Zone", icon: Package },
+    ],
+  };
+
+  const extraSteps = typeSteps[botType] || typeSteps.storage;
+  
+  // Combine and renumber
   return [
-    { id: 1, title: "Auth", icon: Key },
-    { id: 2, title: "Server", icon: Server },
-    { id: 3, title: "Storage", icon: MapPin },
-    { id: 4, title: "Index", icon: Box },
+    ...baseSteps,
+    ...extraSteps.map((step, idx) => ({
+      id: baseSteps.length + idx + 1,
+      title: step.title,
+      icon: step.icon,
+    })),
   ];
 };
 
@@ -115,7 +149,8 @@ export function SetupBotDialog({
   const [msaCode, setMsaCode] = useState<{ userCode: string; verificationUri: string } | null>(null);
 
   const useOfflineAccount = bot?.useOfflineAccount || false;
-  const STEPS = getSteps(useOfflineAccount);
+  const botType = bot?.botType || 'storage';
+  const STEPS = getSteps(useOfflineAccount, botType);
   
   const getStepNumber = (stepName: string) => {
     const step = STEPS.find(s => s.title === stepName);
