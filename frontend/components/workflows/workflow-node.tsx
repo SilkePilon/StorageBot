@@ -195,8 +195,8 @@ function WorkflowNodeComponent({ data, selected }: NodeProps<WorkflowNodeType>) 
         </div>
       </div>
 
-      {/* Output Handle */}
-      {hasOutputs && (
+      {/* Output Handle - exclude conditional nodes which have their own handles */}
+      {hasOutputs && data.nodeType !== "logic.if" && data.nodeType !== "logic.switch" && (
         <Handle
           type="source"
           position={Position.Right}

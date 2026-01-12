@@ -270,7 +270,7 @@ router.get('/:id/executions', authMiddleware, async (req: AuthRequest, res: Resp
       return;
     }
 
-    const limit = parseInt(req.query.limit as string) || 20;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const offset = parseInt(req.query.offset as string) || 0;
 
     const executions = await prisma.workflowExecution.findMany({
@@ -414,10 +414,16 @@ router.all('/webhook/:token', async (req: Request, res: Response) => {
     // Check secret if required
     if (triggerNode?.data?.config?.requireAuth) {
       const secret = req.headers['x-webhook-secret'];
-      // For now, just check that a secret is provided
-      // In production, you'd validate against a stored secret
-      if (!secret) {
-        res.status(401).json({ error: 'X-Webhook-Secret header required' });
+      const expectedSecret = triggerNode?.data?.config?.webhookSecret;
+      
+      if (!expectedSecret) {
+        // No secret configured but auth is required - this is a configuration error
+        res.status(500).json({ error: 'Webhook requires authentication but no secret is configured' });
+        return;
+      }
+      
+      if (!secret || secret !== expectedSecret) {
+        res.status(401).json({ error: 'Invalid or missing X-Webhook-Secret header' });
         return;
       }
     }

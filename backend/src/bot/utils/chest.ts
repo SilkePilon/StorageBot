@@ -113,16 +113,25 @@ export async function findNearbyEmptyChest(
     const block = bot.blockAt(pos);
     if (!block) continue;
 
+    let chest: any = null;
     try {
-      const chest = await bot.openContainer(block);
+      chest = await bot.openContainer(block);
       const isEmpty = chest.containerItems().length === 0;
-      chest.close();
 
       if (isEmpty) {
+        chest.close();
         return block;
       }
     } catch {
-      continue;
+      // Continue to next chest on error
+    } finally {
+      if (chest) {
+        try {
+          chest.close();
+        } catch {
+          // Ignore close errors
+        }
+      }
     }
   }
 

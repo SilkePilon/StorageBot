@@ -288,7 +288,11 @@ export abstract class BaseBotInstance extends EventEmitter {
 
   async disconnect(): Promise<void> {
     if (this.bot) {
-      this.bot.quit();
+      try {
+        this.bot.quit();
+      } catch (e) {
+        console.log(`[Bot ${this.id}] Error during quit:`, e);
+      }
       this.bot = null;
     }
     this.status = { connected: false, spawned: false };
@@ -347,7 +351,7 @@ export abstract class BaseBotInstance extends EventEmitter {
       const afterYaw = this.bot.entity.yaw;
       const afterPitch = this.bot.entity.pitch;
 
-      const yawChanged = Math.abs(beforeYaw - afterYaw) > 0.01 || Math.abs(afterYaw) < 0.01;
+      const yawChanged = Math.abs(beforeYaw - afterYaw) > 0.01;
       const pitchChanged = Math.abs(beforePitch - afterPitch) > 0.01;
 
       if (yawChanged || pitchChanged || attempt > 1) {

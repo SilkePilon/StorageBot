@@ -309,7 +309,6 @@ model Workflow {
   @@index([status])
   @@index([triggerType])
   @@index([nextRunAt])
-  @@index([webhookToken])
 }
 
 model WorkflowExecution {

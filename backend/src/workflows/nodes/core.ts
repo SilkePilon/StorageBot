@@ -169,6 +169,7 @@ export const coreNodes: WorkflowNodeDefinition[] = [
         description: 'Number of times to repeat (for count mode)',
         type: 'number',
         defaultValue: 3,
+        validation: { min: 1, max: 10000 },
       },
       {
         id: 'arrayPath',

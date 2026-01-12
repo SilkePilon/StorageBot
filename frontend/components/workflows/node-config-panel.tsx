@@ -51,8 +51,15 @@ interface NodeConfigPanelProps {
 function getUpstreamNodes(
   nodeId: string,
   allNodes: WorkflowNodeType[],
-  edges: Edge[]
+  edges: Edge[],
+  visited: Set<string> = new Set()
 ): WorkflowNodeType[] {
+  // Prevent infinite recursion on cyclic graphs
+  if (visited.has(nodeId)) {
+    return [];
+  }
+  visited.add(nodeId);
+
   const upstreamNodeIds = edges
     .filter((e) => e.target === nodeId)
     .map((e) => e.source);
@@ -62,7 +69,7 @@ function getUpstreamNodes(
   // Recursively get all upstream nodes
   const allUpstream: WorkflowNodeType[] = [...upstreamNodes];
   for (const node of upstreamNodes) {
-    const moreUpstream = getUpstreamNodes(node.id, allNodes, edges);
+    const moreUpstream = getUpstreamNodes(node.id, allNodes, edges, visited);
     for (const n of moreUpstream) {
       if (!allUpstream.find((u) => u.id === n.id)) {
         allUpstream.push(n);

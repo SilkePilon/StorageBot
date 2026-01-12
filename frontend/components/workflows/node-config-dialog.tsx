@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -256,10 +256,6 @@ export function NodeConfigDialog({
   // Output data for current node
   const outputData = node ? nodeOutputData[node.id] : null;
 
-  const handleDragStart = useCallback((path: string, value: any) => {
-    // This is handled by the onDragStart in JsonTree
-  }, []);
-
   if (!node) return null;
 
   return (
@@ -310,7 +306,7 @@ export function NodeConfigDialog({
                         </Badge>
                       </div>
                       <div className="text-[11px] font-mono">
-                        <JsonTree data={data} onDragStart={handleDragStart} />
+                        <JsonTree data={data} />
                       </div>
                     </div>
                   ))

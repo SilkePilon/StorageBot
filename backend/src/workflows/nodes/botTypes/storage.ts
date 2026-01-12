@@ -334,7 +334,7 @@ export const storageBotWorkflowNodes: BotTypeWorkflowNodes = {
           required: true,
         },
         {
-          id: 'query',
+          id: 'searchQuery',
           name: 'Search Query',
           description: 'Item name to search (or use input)',
           type: 'text',

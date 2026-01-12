@@ -19,6 +19,7 @@ import {
   Panel,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { toast } from "sonner";
 
 import {
   useWorkflow,
@@ -129,20 +130,20 @@ function WorkflowEditorContent({ workflowId }: { workflowId: string }) {
   });
 
   // State for storing node output data (n8n-style)
-  const [nodeOutputData, setNodeOutputData] = useState<Record<string, any>>(() => {
-    // Load from localStorage on init
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(getStorageKey(workflowId));
-      if (stored) {
-        try {
-          return JSON.parse(stored);
-        } catch {
-          return {};
-        }
+  // Initialize with empty object to avoid hydration mismatch
+  const [nodeOutputData, setNodeOutputData] = useState<Record<string, any>>({});
+
+  // Load node output data from localStorage after mount (client-side only)
+  useEffect(() => {
+    const stored = localStorage.getItem(getStorageKey(workflowId));
+    if (stored) {
+      try {
+        setNodeOutputData(JSON.parse(stored));
+      } catch {
+        // Invalid JSON, ignore
       }
     }
-    return {};
-  });
+  }, [workflowId]);
 
   // Save node output data to localStorage when it changes
   useEffect(() => {
@@ -404,6 +405,7 @@ function WorkflowEditorContent({ workflowId }: { workflowId: string }) {
       setHasChanges(false);
     } catch (error) {
       console.error("Failed to save workflow:", error);
+      toast.error("Failed to save workflow. Please try again.");
     }
     setIsSaving(false);
   };
@@ -415,6 +417,7 @@ function WorkflowEditorContent({ workflowId }: { workflowId: string }) {
       setShowExecutions(true);
     } catch (error) {
       console.error("Failed to run workflow:", error);
+      toast.error("Failed to run workflow. Please try again.");
     }
   };
 

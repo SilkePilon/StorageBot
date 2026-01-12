@@ -51,11 +51,11 @@ export function ExecutionPanel({ workflowId, executions }: ExecutionPanelProps) 
     };
 
     const handleNodeStarted = (data: any) => {
-      console.log("Node started:", data);
+      // Node started event - could be used to update UI state
     };
 
     const handleNodeCompleted = (data: any) => {
-      console.log("Node completed:", data);
+      // Node completed event - could be used to update UI state
     };
 
     socket.on("workflow:execution:update", handleExecutionUpdate);

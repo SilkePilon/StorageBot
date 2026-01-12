@@ -1,4 +1,5 @@
 import { Vec3 } from 'vec3';
+import { goals } from 'mineflayer-pathfinder';
 import { BaseBotInstance, BotTypeConfig } from '../../BaseBotInstance.js';
 import { prisma } from '../../../lib/prisma.js';
 import { emitToBot } from '../../../lib/socket.js';
@@ -471,7 +472,6 @@ export class StorageBotInstance extends BaseBotInstance {
 
         if (distToItem > 1.5) {
           try {
-            const { goals } = require('mineflayer-pathfinder');
             await this.bot!.pathfinder.goto(
               new goals.GoalNear(nearest.position.x, nearest.position.y, nearest.position.z, 1)
             );
@@ -675,9 +675,13 @@ export class StorageBotInstance extends BaseBotInstance {
           if (slotInfo.chestItemId) {
             const newCount = slotInfo.available - actualTake;
             if (newCount <= 0) {
-              await prisma.chestItem.delete({ where: { id: slotInfo.chestItemId } }).catch(() => {});
+              await prisma.chestItem.delete({ where: { id: slotInfo.chestItemId } }).catch((err) => {
+                console.error(`[Bot ${this.id}] Failed to delete chestItem:`, err);
+              });
             } else {
-              await prisma.chestItem.update({ where: { id: slotInfo.chestItemId }, data: { count: newCount } }).catch(() => {});
+              await prisma.chestItem.update({ where: { id: slotInfo.chestItemId }, data: { count: newCount } }).catch((err) => {
+                console.error(`[Bot ${this.id}] Failed to update chestItem:`, err);
+              });
             }
           }
           collected.set(slotInfo.itemId, (collected.get(slotInfo.itemId) || 0) + actualTake);
@@ -771,9 +775,13 @@ export class StorageBotInstance extends BaseBotInstance {
                 if (slotInfo.shulkerContentId) {
                   const newCount = slotInfo.available - actualTake;
                   if (newCount <= 0) {
-                    await prisma.shulkerContent.delete({ where: { id: slotInfo.shulkerContentId } }).catch(() => {});
+                    await prisma.shulkerContent.delete({ where: { id: slotInfo.shulkerContentId } }).catch((err) => {
+                      console.error(`[Bot ${this.id}] Failed to delete shulkerContent:`, err);
+                    });
                   } else {
-                    await prisma.shulkerContent.update({ where: { id: slotInfo.shulkerContentId }, data: { count: newCount } }).catch(() => {});
+                    await prisma.shulkerContent.update({ where: { id: slotInfo.shulkerContentId }, data: { count: newCount } }).catch((err) => {
+                      console.error(`[Bot ${this.id}] Failed to update shulkerContent:`, err);
+                    });
                   }
                 }
 
@@ -1016,7 +1024,9 @@ export class StorageBotInstance extends BaseBotInstance {
       chest.close();
       await this.sleep(200);
 
-      await prisma.chestItem.delete({ where: { id: shulkerItem.id } }).catch(() => {});
+      await prisma.chestItem.delete({ where: { id: shulkerItem.id } }).catch((err) => {
+        console.error(`[Bot ${this.id}] Failed to delete shulker chestItem:`, err);
+      });
 
       const placePos = findPlaceableSpot(this.bot!);
       if (!placePos) {

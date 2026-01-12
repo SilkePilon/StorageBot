@@ -18,6 +18,7 @@ done
 echo "PostgreSQL is ready!"
 
 # Apply database schema (generate is already done during build)
-npx prisma db push --accept-data-loss --url "$DATABASE_URL"
+# Note: If schema changes require data loss, this will fail. Review changes manually.
+npx prisma db push --url "$DATABASE_URL"
 
 exec "$@"

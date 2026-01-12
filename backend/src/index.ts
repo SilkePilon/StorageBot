@@ -85,9 +85,17 @@ app.use('/api/workflows', workflowsRoutes);
 
 // Initialize workflows
 initializeWorkflowNodes();
-workflowEngine.initialize().catch(err => {
-  console.error('Failed to initialize workflow engine:', err);
-});
+
+// Initialize workflow engine with error handling
+(async () => {
+  try {
+    await workflowEngine.initialize();
+    console.log('✅ Workflow engine initialized successfully');
+  } catch (err) {
+    console.error('❌ Failed to initialize workflow engine:', err);
+    // Continue running - workflows may not work but the rest of the app should function
+  }
+})();
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

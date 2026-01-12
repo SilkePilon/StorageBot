@@ -1087,10 +1087,10 @@ export class WorkflowEngine extends EventEmitter {
       return this.getNestedValue(context.nodeOutputs[nodeId], path);
     }
     
-    // Check for simple math expressions
+    // Check for simple math expressions - use safe parser instead of eval
     if (/^[\d\s+\-*/().]+$/.test(expression)) {
       try {
-        return eval(expression);
+        return this.safeEvaluateMath(expression);
       } catch {
         return expression;
       }
@@ -1127,6 +1127,54 @@ export class WorkflowEngine extends EventEmitter {
       }
     }
     return true;
+  }
+
+  /**
+   * Safe math expression evaluator using recursive descent parsing.
+   * Only supports: numbers, +, -, *, /, and parentheses.
+   */
+  private safeEvaluateMath(expression: string): number {
+    const tokens = expression.match(/(\d+\.?\d*|\+|\-|\*|\/|\(|\))/g) || [];
+    let pos = 0;
+
+    const parseNumber = (): number => {
+      if (tokens[pos] === '(') {
+        pos++; // skip '('
+        const result = parseExpression();
+        pos++; // skip ')'
+        return result;
+      }
+      return parseFloat(tokens[pos++]);
+    };
+
+    const parseFactor = (): number => {
+      return parseNumber();
+    };
+
+    const parseTerm = (): number => {
+      let result = parseFactor();
+      while (pos < tokens.length && (tokens[pos] === '*' || tokens[pos] === '/')) {
+        const op = tokens[pos++];
+        const right = parseFactor();
+        if (op === '*') result *= right;
+        else if (right !== 0) result /= right;
+        else throw new Error('Division by zero');
+      }
+      return result;
+    };
+
+    const parseExpression = (): number => {
+      let result = parseTerm();
+      while (pos < tokens.length && (tokens[pos] === '+' || tokens[pos] === '-')) {
+        const op = tokens[pos++];
+        const right = parseTerm();
+        if (op === '+') result += right;
+        else result -= right;
+      }
+      return result;
+    };
+
+    return parseExpression();
   }
 
   private getNextCronRun(cronExpression: string): Date | null {
@@ -1220,8 +1268,18 @@ export class WorkflowEngine extends EventEmitter {
     const context = this.runningExecutions.get(executionId);
     if (context) {
       context.cancelled = true;
+      this.runningExecutions.delete(executionId);
       return true;
     }
+    
+    // Also check and clean up pending event executions
+    const pending = this.pendingEventExecutions.get(executionId);
+    if (pending) {
+      pending.reject(new Error('Execution cancelled'));
+      this.pendingEventExecutions.delete(executionId);
+      return true;
+    }
+    
     return false;
   }
 

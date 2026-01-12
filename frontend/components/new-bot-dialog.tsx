@@ -42,7 +42,7 @@ interface NewBotDialogProps {
 export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
   const queryClient = useQueryClient();
   const token = useAuthStore((state) => state.token);
-  const { data: botTypes, isLoading: typesLoading } = useBotTypes();
+  const { data: botTypes, isLoading: typesLoading, isError: typesError } = useBotTypes();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [selectedType, setSelectedType] = useState<string>("storage");
@@ -193,6 +193,10 @@ export function NewBotDialog({ children, onSuccess }: NewBotDialogProps) {
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Loading bot types...
+                  </div>
+                ) : typesError ? (
+                  <div className="text-sm text-destructive">
+                    Failed to load bot types. Please try again.
                   </div>
                 ) : (
                   <div className="grid gap-2">
