@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { BotManager } from '../bot/BotManager.js';
+import { botTypeRegistry } from '../bot/BotTypeRegistry.js';
+
+// Import bot types to ensure they're registered
+import '../bot/types/index.js';
 
 const router = Router();
 
@@ -16,6 +20,17 @@ router.get('/versions', (req, res) => {
   } catch (error) {
     console.error('Get versions error:', error);
     res.status(500).json({ error: 'Failed to get versions' });
+  }
+});
+
+// Get available bot types (public endpoint)
+router.get('/types', (req, res) => {
+  try {
+    const types = botTypeRegistry.getAllTypes();
+    res.json({ types });
+  } catch (error) {
+    console.error('Get bot types error:', error);
+    res.status(500).json({ error: 'Failed to get bot types' });
   }
 });
 
@@ -70,6 +85,7 @@ router.use(authMiddleware);
 
 const createBotSchema = z.object({
   name: z.string().min(1).max(50),
+  botType: z.string().min(1).default('storage'),
   useOfflineAccount: z.boolean().optional().default(false),
   offlineUsername: z.string().min(1).max(16).optional(),
 });
@@ -118,11 +134,18 @@ router.get('/', async (req: AuthRequest, res) => {
 // Create new bot
 router.post('/', async (req: AuthRequest, res) => {
   try {
-    const { name, useOfflineAccount, offlineUsername } = createBotSchema.parse(req.body);
+    const { name, botType, useOfflineAccount, offlineUsername } = createBotSchema.parse(req.body);
+
+    // Validate bot type exists
+    if (!botTypeRegistry.has(botType)) {
+      res.status(400).json({ error: `Invalid bot type: ${botType}` });
+      return;
+    }
 
     const bot = await prisma.bot.create({
       data: {
         name,
+        botType,
         userId: req.userId!,
         useOfflineAccount: useOfflineAccount || false,
         offlineUsername: useOfflineAccount ? (offlineUsername || 'StorageBot') : null,

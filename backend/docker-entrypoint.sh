@@ -17,7 +17,8 @@ until nc -z postgres 5432; do
 done
 echo "PostgreSQL is ready!"
 
-# Apply database schema
-npx prisma db push --skip-generate
+# Apply database schema (generate is already done during build)
+# Note: If schema changes require data loss, this will fail. Review changes manually.
+npx prisma db push --url "$DATABASE_URL"
 
 exec "$@"

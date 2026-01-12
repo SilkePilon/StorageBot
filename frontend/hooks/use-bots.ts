@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { botsApi } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
+import { BotType } from "@/lib/bot-types";
 
 export function useBots() {
   const token = useAuthStore((state) => state.token);
@@ -24,6 +25,17 @@ export function usePublicBots() {
   });
 }
 
+export function useBotTypes() {
+  return useQuery<BotType[]>({
+    queryKey: ["bot-types"],
+    queryFn: async () => {
+      const response = await botsApi.getTypes();
+      return response.types;
+    },
+    staleTime: 1000 * 60 * 60, // Cache for 1 hour (bot types rarely change)
+  });
+}
+
 export function useBot(id: string) {
   const token = useAuthStore((state) => state.token);
 
@@ -39,7 +51,7 @@ export function useCreateBot() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { name: string; useOfflineAccount?: boolean; offlineUsername?: string }) => botsApi.create(token!, data),
+    mutationFn: (data: { name: string; botType?: string; useOfflineAccount?: boolean; offlineUsername?: string }) => botsApi.create(token!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bots"] });
     },
