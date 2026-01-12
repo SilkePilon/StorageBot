@@ -281,6 +281,54 @@ export class StorageBotInstance extends BaseBotInstance {
     }
   }
 
+  /**
+   * Safely open a container block with proper lookAt and retry logic.
+   * This is the core method for opening chests/barrels/shulkers reliably.
+   */
+  private async safeOpenContainer(block: any, maxRetries: number = 3): Promise<any> {
+    if (!this.bot) throw new Error('Bot not connected');
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Calculate the center of the block for looking
+        const blockCenter = block.position.offset(0.5, 0.5, 0.5);
+        
+        // Look at the block center - this is crucial for Minecraft to accept the interaction
+        await this.bot.lookAt(blockCenter, true);
+        await this.bot.waitForTicks(2); // Wait for physics to sync
+        
+        // Small delay to ensure server receives the look packet
+        await this.sleep(50);
+        
+        // Open the container
+        const container = await this.bot.openContainer(block);
+        
+        // Give the window time to populate its items
+        await this.sleep(100);
+        
+        return container;
+      } catch (error: any) {
+        const errorMsg = error?.message || String(error);
+        console.warn(`[Bot ${this.id}] Attempt ${attempt}/${maxRetries} to open container failed: ${errorMsg}`);
+        
+        if (attempt < maxRetries) {
+          // Wait longer between retries with exponential backoff
+          await this.sleep(200 * attempt);
+          
+          // Try to look at the block again from a slightly different angle
+          const offset = (attempt - 1) * 0.1;
+          const blockPos = block.position.offset(0.5 + offset, 0.5, 0.5 - offset);
+          await this.bot.lookAt(blockPos, true);
+          await this.bot.waitForTicks(3);
+        } else {
+          throw new Error(`Failed to open container after ${maxRetries} attempts: ${errorMsg}`);
+        }
+      }
+    }
+    
+    throw new Error('Failed to open container: unexpected state');
+  }
+
   private async openAndReadChest(x: number, y: number, z: number): Promise<any[]> {
     if (!this.bot) throw new Error('Bot not connected');
 
@@ -288,11 +336,12 @@ export class StorageBotInstance extends BaseBotInstance {
     if (!block) throw new Error('Block not found');
 
     await this.moveToBlock(x, y, z);
-    await this.sleep(200);
+    await this.sleep(150);
 
-    const chest = await this.bot.openContainer(block);
+    // Use safe container opening with lookAt and retries
+    const chest = await this.safeOpenContainer(block);
 
-    const items = chest.containerItems().map((item) => {
+    const items = chest.containerItems().map((item: any) => {
       const baseItem = {
         slot: item.slot,
         itemId: item.name,
@@ -314,7 +363,7 @@ export class StorageBotInstance extends BaseBotInstance {
       return baseItem;
     });
 
-    await this.sleep(100);
+    await this.sleep(50);
     chest.close();
 
     return items;
@@ -608,13 +657,12 @@ export class StorageBotInstance extends BaseBotInstance {
 
       try {
         await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
-        await this.sleep(200);
+        await this.sleep(150);
 
         const block = this.bot!.blockAt(new Vec3(chestPlan.x, chestPlan.y, chestPlan.z));
         if (!block) continue;
 
-        const chest = await this.bot!.openContainer(block);
-        await this.sleep(100);
+        const chest = await this.safeOpenContainer(block);
 
         const withdrawnFromChest: { slotInfo: any; actualTake: number }[] = [];
 
@@ -627,7 +675,7 @@ export class StorageBotInstance extends BaseBotInstance {
           const toTake = Math.min(needed.remaining, slotInfo.available);
           if (toTake <= 0) continue;
 
-          const chestItem = chest.containerItems().find((i) => i.slot === slotInfo.slot);
+          const chestItem = chest.containerItems().find((i: any) => i.slot === slotInfo.slot);
           if (chestItem && chestItem.name === slotInfo.itemId) {
             const actualTake = Math.min(toTake, chestItem.count);
 
@@ -714,7 +762,7 @@ export class StorageBotInstance extends BaseBotInstance {
           if (slotsStillNeeded.length === 0) continue;
 
           const shulkerSlot = slotsStillNeeded[0].slot;
-          const shulkerInChest = chest.containerItems().find((i) => i.slot === shulkerSlot && i.name.includes('shulker_box'));
+          const shulkerInChest = chest.containerItems().find((i: any) => i.slot === shulkerSlot && i.name.includes('shulker_box'));
 
           if (!shulkerInChest) continue;
 
@@ -726,7 +774,7 @@ export class StorageBotInstance extends BaseBotInstance {
 
           const placePos = findPlaceableSpot(this.bot!);
           if (!placePos) {
-            const chestAgain = await this.bot!.openContainer(block);
+            const chestAgain = await this.safeOpenContainer(block);
             const shulkerInv = findShulkerInInventory(this.bot!);
             if (shulkerInv) {
               await chestAgain.deposit(shulkerInv.type, null, 1);
@@ -753,8 +801,7 @@ export class StorageBotInstance extends BaseBotInstance {
 
           const placedShulker = this.bot!.blockAt(placePos);
           if (placedShulker?.name.includes('shulker_box')) {
-            const shulkerContainer = await this.bot!.openContainer(placedShulker);
-            await this.sleep(100);
+            const shulkerContainer = await this.safeOpenContainer(placedShulker);
 
             for (const slotInfo of slotsStillNeeded) {
               if (this.taskCancelled) break;
@@ -765,7 +812,7 @@ export class StorageBotInstance extends BaseBotInstance {
               const toTake = Math.min(needed.remaining, slotInfo.available);
               if (toTake <= 0) continue;
 
-              const itemInShulker = shulkerContainer.containerItems().find((i) => i.slot === slotInfo.slotInShulker);
+              const itemInShulker = shulkerContainer.containerItems().find((i: any) => i.slot === slotInfo.slotInShulker);
               if (itemInShulker && itemInShulker.name === slotInfo.itemId) {
                 const actualTake = Math.min(toTake, itemInShulker.count);
                 await shulkerContainer.withdraw(itemInShulker.type, null, actualTake);
@@ -803,17 +850,16 @@ export class StorageBotInstance extends BaseBotInstance {
             }
 
             await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
-            await this.sleep(200);
+            await this.sleep(150);
 
-            const chestAgain = await this.bot!.openContainer(block);
-            await this.sleep(100);
+            const chestAgain = await this.safeOpenContainer(block);
 
             const shulkerToReturn = findShulkerInInventory(this.bot!);
             if (shulkerToReturn) {
               await chestAgain.deposit(shulkerToReturn.type, null, 1);
               await this.sleep(100);
 
-              const depositedShulker = chestAgain.containerItems().find((i) => i.name.includes('shulker_box') && i.name === shulkerToReturn.name);
+              const depositedShulker = chestAgain.containerItems().find((i: any) => i.name.includes('shulker_box') && i.name === shulkerToReturn.name);
               if (depositedShulker && depositedShulker.slot !== shulkerOriginalSlot) {
                 const chestItemId = slotsStillNeeded[0]?.chestItemId;
                 if (chestItemId) {
@@ -939,10 +985,9 @@ export class StorageBotInstance extends BaseBotInstance {
 
     await this.updateTaskStep(task.id, 'Depositing items...');
     await this.moveToBlock(chestBlock.position.x, chestBlock.position.y, chestBlock.position.z);
-    await this.sleep(200);
+    await this.sleep(150);
 
-    const chest = await this.bot!.openContainer(chestBlock);
-    await this.sleep(100);
+    const chest = await this.safeOpenContainer(chestBlock);
 
     const itemsToDeliver = new Set(items.keys());
 
@@ -1001,7 +1046,7 @@ export class StorageBotInstance extends BaseBotInstance {
       await this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length}...`);
 
       await this.moveToBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
-      await this.sleep(200);
+      await this.sleep(150);
 
       const chestBlock = this.bot!.blockAt(new Vec3(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z));
       if (!chestBlock) {
@@ -1009,10 +1054,9 @@ export class StorageBotInstance extends BaseBotInstance {
         continue;
       }
 
-      const chest = await this.bot!.openContainer(chestBlock);
-      await this.sleep(100);
+      const chest = await this.safeOpenContainer(chestBlock);
 
-      const shulkerInChest = chest.containerItems().find((i) => i.slot === shulkerItem.slot && i.name.includes('shulker_box'));
+      const shulkerInChest = chest.containerItems().find((i: any) => i.slot === shulkerItem.slot && i.name.includes('shulker_box'));
 
       if (!shulkerInChest) {
         chest.close();
@@ -1064,8 +1108,8 @@ export class StorageBotInstance extends BaseBotInstance {
         continue;
       }
 
-      const shulkerContainer = await this.bot!.openContainer(placedShulker);
-      await this.sleep(200);
+      const shulkerContainer = await this.safeOpenContainer(placedShulker);
+      await this.sleep(100);
 
       await this.updateTaskStep(task.id, `Packing items into shulker ${shulkerIndex + 1}...`);
       packableItems = getPackableItems();
