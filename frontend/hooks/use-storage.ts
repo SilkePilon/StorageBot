@@ -31,11 +31,19 @@ export function useUpdateStorageSystem() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { returnToHome?: boolean; name?: string; radius?: number } }) =>
+    mutationFn: ({ id, data }: { id: string; data: { 
+      returnToHome?: boolean; 
+      name?: string; 
+      radius?: number;
+      centerX?: number;
+      centerY?: number;
+      centerZ?: number;
+    } }) =>
       storageApi.update(token!, id, data),
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ["storage-system", id] });
       queryClient.invalidateQueries({ queryKey: ["storage-systems"] });
+      queryClient.invalidateQueries({ queryKey: ["bots"] });
     },
   });
 }
