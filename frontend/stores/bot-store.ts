@@ -1,5 +1,12 @@
 import { create } from "zustand";
 
+interface StatusEffect {
+  id: number;
+  name: string;
+  amplifier: number;
+  duration: number; // in ticks (20 ticks = 1 second)
+}
+
 interface BotStatus {
   connected: boolean;
   spawned: boolean;
@@ -10,6 +17,7 @@ interface BotStatus {
   gameMode?: string;
   serverVersion?: string;
   currentAction?: string;
+  effects?: StatusEffect[];
 }
 
 interface BotState {

@@ -106,6 +106,19 @@ export function useStartBotAuth() {
   });
 }
 
+export function useForceReauth() {
+  const token = useAuthStore((state) => state.token);
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => botsApi.forceReauth(token!, id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ["bots"] });
+      queryClient.invalidateQueries({ queryKey: ["bot", id] });
+    },
+  });
+}
+
 export function useConnectBot() {
   const token = useAuthStore((state) => state.token);
   const queryClient = useQueryClient();

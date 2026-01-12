@@ -3,6 +3,7 @@ import { botTypeRegistry } from './BotTypeRegistry.js';
 import { prisma } from '../lib/prisma.js';
 import { emitToBot, emitToUser } from '../lib/socket.js';
 import fs from 'fs';
+import path from 'path';
 // @ts-ignore - prismarine-auth doesn't have types in package
 import { Authflow, Titles } from 'prismarine-auth';
 
@@ -23,19 +24,231 @@ interface AuthSession {
   authPromise?: Promise<any>;
 }
 
+// Token refresh check interval (1 hour)
+const TOKEN_REFRESH_INTERVAL = 60 * 60 * 1000;
+// Refresh tokens if they expire within this time (4 hours)
+const TOKEN_REFRESH_THRESHOLD = 4 * 60 * 60 * 1000;
+
+// Common auth error patterns that indicate token/auth issues
+const AUTH_ERROR_PATTERNS = [
+  'Failed to obtain profile data',
+  'does the account own minecraft',
+  'Invalid token',
+  'Token expired',
+  'Authentication failed',
+  'Unable to authenticate',
+  'XSTS token',
+  'Xbox Live',
+];
+
 export class BotManager {
   private static instance: BotManager;
   private bots: Map<string, BaseBotInstance> = new Map();
   private authSessions: Map<string, AuthSession> = new Map();
   private taskQueues: Map<string, boolean> = new Map();
+  private tokenRefreshInterval: NodeJS.Timeout | null = null;
 
-  private constructor() {}
+  private constructor() {
+    // Start proactive token refresh on instantiation
+    this.startTokenRefreshScheduler();
+  }
 
   static getInstance(): BotManager {
     if (!BotManager.instance) {
       BotManager.instance = new BotManager();
     }
     return BotManager.instance;
+  }
+
+  // ============ PROACTIVE TOKEN REFRESH ============
+
+  /**
+   * Start the background token refresh scheduler
+   */
+  private startTokenRefreshScheduler(): void {
+    console.log('[BotManager] Starting proactive token refresh scheduler');
+    
+    // Run immediately on startup, then every hour
+    this.refreshAllTokens();
+    
+    this.tokenRefreshInterval = setInterval(() => {
+      this.refreshAllTokens();
+    }, TOKEN_REFRESH_INTERVAL);
+  }
+
+  /**
+   * Stop the token refresh scheduler
+   */
+  private stopTokenRefreshScheduler(): void {
+    if (this.tokenRefreshInterval) {
+      clearInterval(this.tokenRefreshInterval);
+      this.tokenRefreshInterval = null;
+    }
+  }
+
+  /**
+   * Check and refresh tokens for all authenticated bots
+   */
+  private async refreshAllTokens(): Promise<void> {
+    console.log('[BotManager] Checking tokens for all bots...');
+    
+    try {
+      // Get all bots with Microsoft auth that are authenticated
+      const bots = await prisma.bot.findMany({
+        where: {
+          isAuthenticated: true,
+          useOfflineAccount: false,
+          microsoftEmail: { not: null },
+        },
+        select: {
+          id: true,
+          microsoftEmail: true,
+          userId: true,
+        },
+      });
+
+      console.log(`[BotManager] Found ${bots.length} authenticated bots to check`);
+
+      for (const bot of bots) {
+        await this.checkAndRefreshToken(bot.id, bot.microsoftEmail!, bot.userId);
+      }
+    } catch (error) {
+      console.error('[BotManager] Error during token refresh check:', error);
+    }
+  }
+
+  /**
+   * Check if a bot's token needs refresh and refresh it if necessary
+   */
+  private async checkAndRefreshToken(botId: string, email: string, userId: string): Promise<boolean> {
+    const cacheDir = `./auth_cache/${botId}`;
+    
+    if (!fs.existsSync(cacheDir)) {
+      console.log(`[BotManager] No auth cache for bot ${botId}, skipping`);
+      return false;
+    }
+
+    try {
+      // Check if any cache files exist
+      const files = fs.readdirSync(cacheDir);
+      const liveCache = files.find(f => f.endsWith('_live-cache.json'));
+      
+      if (!liveCache) {
+        console.log(`[BotManager] No live cache for bot ${botId}`);
+        return false;
+      }
+
+      // Read the live cache to check expiry
+      const liveCachePath = path.join(cacheDir, liveCache);
+      const cacheData = JSON.parse(fs.readFileSync(liveCachePath, 'utf8'));
+      
+      // Check if token expires soon
+      const expiresAt = cacheData.token?.expires_at || cacheData.expires_at;
+      if (!expiresAt) {
+        console.log(`[BotManager] No expiry found in cache for bot ${botId}`);
+        return false;
+      }
+
+      const expiryTime = new Date(expiresAt * 1000).getTime();
+      const now = Date.now();
+      const timeUntilExpiry = expiryTime - now;
+
+      if (timeUntilExpiry > TOKEN_REFRESH_THRESHOLD) {
+        // Token is still valid for a while, no need to refresh
+        const hoursLeft = Math.round(timeUntilExpiry / (60 * 60 * 1000));
+        console.log(`[BotManager] Bot ${botId} token valid for ~${hoursLeft} hours`);
+        return true;
+      }
+
+      console.log(`[BotManager] Bot ${botId} token expires soon, refreshing...`);
+
+      // Try to refresh the token
+      const authflow = new Authflow(
+        email,
+        cacheDir,
+        { authTitle: Titles.MinecraftNintendoSwitch, deviceType: 'Nintendo', flow: 'live' }
+      );
+
+      await authflow.getMinecraftJavaToken({ fetchProfile: true });
+      console.log(`[BotManager] Successfully refreshed token for bot ${botId}`);
+      
+      // Emit event to notify frontend
+      emitToBot(botId, 'bot:tokenRefreshed', { botId, success: true });
+      
+      return true;
+    } catch (error) {
+      console.error(`[BotManager] Failed to refresh token for bot ${botId}:`, error);
+      
+      // Check if this is a fatal auth error that requires re-authentication
+      const errorMessage = (error as Error).message || '';
+      const isFatalAuthError = AUTH_ERROR_PATTERNS.some(pattern => 
+        errorMessage.toLowerCase().includes(pattern.toLowerCase())
+      );
+
+      if (isFatalAuthError) {
+        console.log(`[BotManager] Fatal auth error for bot ${botId}, marking as unauthenticated`);
+        
+        // Mark bot as needing re-authentication
+        await prisma.bot.update({
+          where: { id: botId },
+          data: { isAuthenticated: false },
+        });
+
+        // Notify frontend
+        emitToBot(botId, 'bot:authExpired', { 
+          botId, 
+          error: errorMessage,
+          requiresReauth: true,
+        });
+      }
+
+      return false;
+    }
+  }
+
+  /**
+   * Clear auth cache for a bot (used before re-authentication)
+   */
+  async clearAuthCache(botId: string): Promise<void> {
+    const sanitizedBotId = botId.replace(/[^a-zA-Z0-9-]/g, '');
+    const cacheDir = `./auth_cache/${sanitizedBotId}`;
+    
+    if (fs.existsSync(cacheDir)) {
+      const files = fs.readdirSync(cacheDir);
+      for (const file of files) {
+        fs.unlinkSync(path.join(cacheDir, file));
+      }
+      console.log(`[BotManager] Cleared auth cache for bot ${botId}`);
+    }
+
+    // Mark bot as unauthenticated
+    await prisma.bot.update({
+      where: { id: botId },
+      data: { isAuthenticated: false },
+    });
+  }
+
+  /**
+   * Force re-authentication for a bot (clears cache and starts fresh auth)
+   */
+  async forceReauthenticate(botId: string, userId: string): Promise<{ status: string; message: string }> {
+    console.log(`[BotManager] Force re-authenticate for bot ${botId}`);
+    
+    // First disconnect the bot if connected
+    const bot = this.bots.get(botId);
+    if (bot) {
+      await bot.disconnect();
+      this.bots.delete(botId);
+    }
+
+    // Clear the auth cache
+    await this.clearAuthCache(botId);
+
+    // Clear any existing auth session
+    this.authSessions.delete(botId);
+
+    // Start fresh authentication
+    return this.startAuthentication(botId, userId);
   }
 
   /**
@@ -244,7 +457,28 @@ export class BotManager {
 
         emitToBot(botId, 'bot:connected', { botId, ...bot.getStatus() });
       } catch (error) {
-        emitToBot(botId, 'bot:connectionFailed', { botId, error: (error as Error).message });
+        const errorMessage = (error as Error).message || '';
+        
+        // Check if this is an auth error that requires re-authentication
+        const isAuthError = AUTH_ERROR_PATTERNS.some(pattern => 
+          errorMessage.toLowerCase().includes(pattern.toLowerCase())
+        );
+
+        if (isAuthError) {
+          console.log(`[BotManager] Auth error detected for bot ${botId}, clearing cache`);
+          
+          // Clear the auth cache so next connect attempt will trigger fresh auth
+          await this.clearAuthCache(botId);
+          
+          // Emit specific auth error event
+          emitToBot(botId, 'bot:authExpired', { 
+            botId, 
+            error: errorMessage,
+            requiresReauth: true,
+          });
+        }
+
+        emitToBot(botId, 'bot:connectionFailed', { botId, error: errorMessage, isAuthError });
         throw error;
       }
     }
@@ -411,6 +645,9 @@ export class BotManager {
   }
 
   async shutdown(): Promise<void> {
+    // Stop the token refresh scheduler
+    this.stopTokenRefreshScheduler();
+    
     const promises = Array.from(this.bots.values()).map((bot) => bot.disconnect());
     await Promise.all(promises);
     this.bots.clear();
