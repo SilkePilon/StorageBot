@@ -70,6 +70,9 @@ model StorageSystem {
   centerZ   Int
   radius    Int      @default(32)
 
+  // Settings
+  returnToHome  Boolean  @default(true) // Return to center after indexing/tasks
+
   // Indexing status
   isIndexed     Boolean  @default(false)
   lastIndexed   DateTime?

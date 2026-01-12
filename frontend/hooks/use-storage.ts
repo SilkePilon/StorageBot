@@ -26,6 +26,20 @@ export function useStorageSystem(id: string) {
   });
 }
 
+export function useUpdateStorageSystem() {
+  const token = useAuthStore((state) => state.token);
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { returnToHome?: boolean; name?: string; radius?: number } }) =>
+      storageApi.update(token!, id, data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ["storage-system", id] });
+      queryClient.invalidateQueries({ queryKey: ["storage-systems"] });
+    },
+  });
+}
+
 export function useCreateStorageSystem() {
   const token = useAuthStore((state) => state.token);
   const queryClient = useQueryClient();

@@ -40,6 +40,7 @@ const updateStorageSchema = z.object({
   centerY: z.number().int().optional(),
   centerZ: z.number().int().optional(),
   radius: z.number().int().min(1).max(64).optional(),
+  returnToHome: z.boolean().optional(),
 });
 
 // List storage systems for a bot
@@ -148,7 +149,7 @@ router.patch('/:id', async (req: AuthRequest, res) => {
       where: { id: req.params.id },
       include: {
         bot: {
-          select: { userId: true },
+          select: { id: true, userId: true },
         },
       },
     });
@@ -162,6 +163,17 @@ router.patch('/:id', async (req: AuthRequest, res) => {
       where: { id: req.params.id },
       data,
     });
+
+    // If returnToHome was just enabled, trigger immediate return if bot is idle
+    if (data.returnToHome === true && !storage.returnToHome) {
+      const botInstance = BotManager.getInstance().getBot(storage.bot.id);
+      if (botInstance && 'triggerReturnToHome' in botInstance) {
+        // Fire and forget - don't wait for it to complete
+        (botInstance as any).triggerReturnToHome(req.params.id).catch((err: any) => {
+          console.warn('Failed to trigger return to home:', err);
+        });
+      }
+    }
 
     res.json(updatedStorage);
   } catch (error) {
