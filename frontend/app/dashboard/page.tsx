@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useDebounce } from "use-debounce";
 import { useBots, useConnectBot, useDisconnectBot, useDeleteBot, useSetBotVisibility, usePublicBots, useForceReauth } from "@/hooks/use-bots";
-import { useStorageSystems, useStorageItems, useStartIndexing, useStopIndexing, useStorageStats } from "@/hooks/use-storage";
+import { useStorageSystems, useStorageItems, useStartIndexing, useStopIndexing, useStorageStats, useUpdateStorageSystem } from "@/hooks/use-storage";
 import { useBotStore } from "@/stores/bot-store";
 import { useSocket } from "@/hooks/use-socket";
 import { useQueryClient } from "@tanstack/react-query";
@@ -48,6 +48,7 @@ import {
   ClipboardList,
   Square,
   KeyRound,
+  Home,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -176,6 +177,9 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   const { data: storageStats, isLoading: statsLoading } = useStorageStats(selectedStorageId || "", bot.id);
   const startIndex = useStartIndexing();
   const stopIndex = useStopIndexing();
+  const updateStorage = useUpdateStorageSystem();
+
+  const currentStorage = storageSystems?.find((s: any) => s.id === selectedStorageId);
 
   const status = botStatuses[bot.id] || bot.runtimeStatus;
   const isOnline = status?.connected;
@@ -841,6 +845,35 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                       onToggle={toggleAllShulkers}
                       disabled={allShulkerIds.length === 0}
                     />
+                  )}
+                  {isOwner && selectedStorageId && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant={currentStorage?.returnToHome ? "default" : "outline"}
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          onClick={() => {
+                            const newValue = !(currentStorage?.returnToHome ?? true);
+                            updateStorage.mutate(
+                              { id: selectedStorageId, data: { returnToHome: newValue } },
+                              {
+                                onSuccess: () => {
+                                  toast.success(newValue ? "Bot will return home after tasks" : "Return home disabled");
+                                  refetchStorageSystems();
+                                },
+                              }
+                            );
+                          }}
+                          disabled={updateStorage.isPending}
+                        >
+                          <Home className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        {currentStorage?.returnToHome ? "Return home enabled" : "Return home disabled"}
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground ml-auto">
                     <span>{itemsData?.pagination?.total || 0} items</span>

@@ -53,7 +53,66 @@ export class StorageBotInstance extends BaseBotInstance {
   protected getTypeSpecificStatus(): Record<string, any> {
     return {
       isIndexing: this.isIndexing,
+      hasActiveTask: this.currentTaskId !== null,
     };
+  }
+
+  /**
+   * Check if bot is idle (not indexing and no active task).
+   */
+  isIdle(): boolean {
+    return !this.isIndexing && this.currentTaskId === null;
+  }
+
+  /**
+   * Trigger return to home for a storage system.
+   * Only works if bot is idle.
+   */
+  async triggerReturnToHome(storageId: string): Promise<boolean> {
+    if (!this.isIdle()) {
+      console.log(`[Bot ${this.id}] Cannot return to home - bot is busy`);
+      return false;
+    }
+
+    if (!this.bot || !this.getStatus().spawned) {
+      console.log(`[Bot ${this.id}] Cannot return to home - bot not connected`);
+      return false;
+    }
+
+    try {
+      const storage = await prisma.storageSystem.findUnique({
+        where: { id: storageId },
+        select: { centerX: true, centerY: true, centerZ: true },
+      });
+
+      if (!storage) {
+        return false;
+      }
+
+      // Check if already at home (within 5 blocks)
+      const pos = this.bot.entity.position;
+      const distance = Math.sqrt(
+        Math.pow(pos.x - storage.centerX, 2) +
+        Math.pow(pos.y - storage.centerY, 2) +
+        Math.pow(pos.z - storage.centerZ, 2)
+      );
+
+      if (distance <= 5) {
+        console.log(`[Bot ${this.id}] Already at home location`);
+        return true;
+      }
+
+      console.log(`[Bot ${this.id}] Returning to home location...`);
+      this.setCurrentAction('Returning to home...');
+      await this.moveTo(storage.centerX, storage.centerY, storage.centerZ);
+      this.setCurrentAction(undefined);
+      console.log(`[Bot ${this.id}] Arrived at home location`);
+      return true;
+    } catch (error) {
+      console.warn(`[Bot ${this.id}] Failed to return to home:`, error);
+      this.setCurrentAction(undefined);
+      return false;
+    }
   }
 
   // ============ STORAGE-SPECIFIC: INDEXING ============
@@ -266,6 +325,9 @@ export class StorageBotInstance extends BaseBotInstance {
       });
 
       emitToBot(this.id, 'storage:statsUpdated', { botId: this.id, storageId });
+
+      // Return to home if enabled
+      await this.returnToHomeIfEnabled(storageId);
     } catch (error) {
       console.error('Indexing failed:', error);
       emitToBot(this.id, 'storage:indexError', {
@@ -273,6 +335,9 @@ export class StorageBotInstance extends BaseBotInstance {
         storageId,
         error: (error as Error).message,
       });
+      
+      // Return to home even on failure
+      await this.returnToHomeIfEnabled(storageId);
       throw error;
     } finally {
       this.isIndexing = false;
@@ -282,259 +347,71 @@ export class StorageBotInstance extends BaseBotInstance {
   }
 
   /**
-   * Get a block at a position, waiting for the chunk to load if necessary.
-   * This is crucial for when players disconnect and chunks become unloaded.
+   * Return to the storage system center if returnToHome is enabled.
    */
-  private async getBlockWithChunkWait(x: number, y: number, z: number, maxWaitMs: number = 10000): Promise<any> {
+  private async returnToHomeIfEnabled(storageId: string): Promise<void> {
+    try {
+      const storage = await prisma.storageSystem.findUnique({
+        where: { id: storageId },
+        select: { returnToHome: true, centerX: true, centerY: true, centerZ: true },
+      });
+
+      if (storage?.returnToHome && this.bot) {
+        console.log(`[Bot ${this.id}] Returning to home location...`);
+        this.setCurrentAction('Returning to home...');
+        await this.moveTo(storage.centerX, storage.centerY, storage.centerZ);
+        console.log(`[Bot ${this.id}] Arrived at home location`);
+      }
+    } catch (error) {
+      console.warn(`[Bot ${this.id}] Failed to return to home:`, error);
+    }
+  }
+
+  /**
+   * Get a block at a position, with basic chunk loading wait.
+   */
+  private async getBlock(x: number, y: number, z: number): Promise<any> {
     if (!this.bot) throw new Error('Bot not connected');
 
     const pos = new Vec3(x, y, z);
-    
-    // First, try to get the block directly
     let block = this.bot.blockAt(pos);
-    if (block) return block;
-
-    // Block not loaded - need to move closer and wait for chunk to load
-    console.log(`[Bot ${this.id}] Block at ${x}, ${y}, ${z} not loaded, moving closer and waiting for chunk...`);
     
-    // Move to the area to trigger chunk loading
-    try {
-      await this.moveToBlock(x, y, z);
-    } catch (moveError) {
-      // Pathfinding might fail if chunks aren't loaded, but let's try waiting anyway
-      console.warn(`[Bot ${this.id}] Pathfinding failed, waiting for chunks to load...`);
-    }
-
-    // Wait for chunks to load
-    try {
+    if (!block) {
+      // Wait for chunks to load and try again
       await this.bot.waitForChunksToLoad();
-    } catch (e) {
-      // Ignore timeout errors
-    }
-
-    // Try to get the block again after waiting
-    block = this.bot.blockAt(pos);
-    if (block) return block;
-
-    // Still not loaded - poll with timeout
-    const startTime = Date.now();
-    while (Date.now() - startTime < maxWaitMs) {
-      await this.sleep(500);
       block = this.bot.blockAt(pos);
-      if (block) {
-        console.log(`[Bot ${this.id}] Block at ${x}, ${y}, ${z} loaded after ${Date.now() - startTime}ms`);
-        return block;
-      }
     }
 
-    throw new Error(`Block at ${x}, ${y}, ${z} not loaded after ${maxWaitMs}ms - chunk may be unloaded by server`);
-  }
+    if (!block) {
+      throw new Error(`Block at ${x}, ${y}, ${z} not loaded`);
+    }
 
-  // Track time of last successful container open for cooldown logic
-  private lastContainerOpenTime: number = 0;
-  
-  // Minimum delay between container opens (workaround for mineflayer issue #3360)
-  // After a player disconnects, server needs time to process block interactions
-  private static readonly CONTAINER_OPEN_COOLDOWN_MS = 1500;
-
-  /**
-   * Custom container opening with multiple activation attempts.
-   * Mineflayer's openContainer has a hardcoded 20s timeout and only activates once.
-   * This method activates the block multiple times while waiting for windowOpen.
-   */
-  private async openContainerWithRetry(block: any, timeoutMs: number = 30000): Promise<any> {
-    if (!this.bot) throw new Error('Bot not connected');
-
-    return new Promise(async (resolve, reject) => {
-      let resolved = false;
-      let activationAttempts = 0;
-      const maxActivations = 5;
-      let activationInterval: NodeJS.Timeout | null = null;
-
-      // Handler for when window opens
-      const onWindowOpen = (window: any) => {
-        if (resolved) return;
-        resolved = true;
-        if (activationInterval) clearInterval(activationInterval);
-        this.lastContainerOpenTime = Date.now();
-        console.log(`[Bot ${this.id}] Container opened after ${activationAttempts} activation(s)`);
-        resolve(window);
-      };
-
-      // Set up the listener
-      this.bot!.once('windowOpen', onWindowOpen);
-
-      // Timeout handler
-      const timeoutId = setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        if (activationInterval) clearInterval(activationInterval);
-        this.bot!.removeListener('windowOpen', onWindowOpen);
-        reject(new Error(`Container did not open within ${timeoutMs}ms after ${activationAttempts} activations`));
-      }, timeoutMs);
-
-      // Function to attempt activation
-      const tryActivate = async () => {
-        if (resolved || activationAttempts >= maxActivations) return;
-        
-        activationAttempts++;
-        console.log(`[Bot ${this.id}] Activation attempt ${activationAttempts}/${maxActivations}`);
-        
-        try {
-          // Re-fetch block to ensure fresh state
-          const freshBlock = this.bot!.blockAt(block.position);
-          if (!freshBlock) {
-            console.warn(`[Bot ${this.id}] Block not found at position, skipping activation`);
-            return;
-          }
-
-          // Look at block center
-          const blockCenter = freshBlock.position.offset(0.5, 0.5, 0.5);
-          await this.bot!.lookAt(blockCenter, true);
-          await this.bot!.waitForTicks(2);
-          
-          // Sneak before interacting (helps with some servers)
-          this.bot!.setControlState('sneak', true);
-          await this.sleep(100);
-          
-          // Activate the block
-          await this.bot!.activateBlock(freshBlock);
-          
-          // Release sneak
-          await this.sleep(50);
-          this.bot!.setControlState('sneak', false);
-          
-        } catch (err: any) {
-          console.warn(`[Bot ${this.id}] Activation attempt ${activationAttempts} error: ${err.message}`);
-        }
-      };
-
-      // First activation attempt
-      await tryActivate();
-
-      // If not resolved, try activating again every 3 seconds
-      if (!resolved) {
-        activationInterval = setInterval(async () => {
-          if (resolved) {
-            if (activationInterval) clearInterval(activationInterval);
-            return;
-          }
-          await tryActivate();
-        }, 3000);
-      }
-
-      // Clean up timeout on success
-      this.bot!.once('windowOpen', () => {
-        clearTimeout(timeoutId);
-      });
-    });
+    return block;
   }
 
   /**
-   * Safely open a container block with proper lookAt, cooldown, and retry logic.
-   * This is the core method for opening chests/barrels/shulkers reliably.
-   * 
-   * Includes workaround for mineflayer issue #3360 - after a player disconnects,
-   * the server may not respond to block interactions without a delay.
+   * Safely open a container block with lookAt for reliable interaction.
    */
-  private async safeOpenContainer(block: any, maxRetries: number = 3): Promise<any> {
+  private async safeOpenContainer(block: any): Promise<any> {
     if (!this.bot) throw new Error('Bot not connected');
 
-    // Ensure minimum cooldown between container opens (issue #3360 workaround)
-    const timeSinceLastOpen = Date.now() - this.lastContainerOpenTime;
-    if (timeSinceLastOpen < StorageBotInstance.CONTAINER_OPEN_COOLDOWN_MS) {
-      const waitTime = StorageBotInstance.CONTAINER_OPEN_COOLDOWN_MS - timeSinceLastOpen;
-      console.log(`[Bot ${this.id}] Waiting ${waitTime}ms before opening container (cooldown)`);
-      await this.sleep(waitTime);
-    }
+    const blockCenter = block.position.offset(0.5, 0.5, 0.5);
+    await this.bot.lookAt(blockCenter, true);
+    await this.bot.waitForTicks(2);
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        // Re-fetch the block to ensure we have the latest state
-        const freshBlock = await this.getBlockWithChunkWait(
-          block.position.x, 
-          block.position.y, 
-          block.position.z
-        );
-        
-        // Calculate the center of the block for looking
-        const blockCenter = freshBlock.position.offset(0.5, 0.5, 0.5);
-        
-        // Look at the block center
-        await this.bot.lookAt(blockCenter, true);
-        await this.bot.waitForTicks(5);
-        
-        // Longer delay for ViaVersion/Raspberry Pi latency
-        await this.sleep(300);
-        
-        // Ensure we're not holding any item that could interfere
-        try {
-          await this.bot.unequip('hand');
-        } catch {
-          // Ignore unequip errors
-        }
-        await this.sleep(100);
-        
-        // Use our custom opener with multiple activations
-        const container = await this.openContainerWithRetry(freshBlock, 25000);
-        
-        // Give the window time to populate its items
-        await this.sleep(200);
-        
-        return container;
-      } catch (error: any) {
-        const errorMsg = error?.message || String(error);
-        console.warn(`[Bot ${this.id}] Attempt ${attempt}/${maxRetries} to open container failed: ${errorMsg}`);
-        
-        if (attempt < maxRetries) {
-          // Wait longer between retries - 2 seconds for Raspberry Pi
-          const retryDelay = 2000 * attempt;
-          console.log(`[Bot ${this.id}] Retrying in ${retryDelay}ms...`);
-          await this.sleep(retryDelay);
-          
-          // Move away and back to reset server-side state
-          if (this.bot.entity) {
-            const currentPos = this.bot.entity.position;
-            try {
-              // Move 2 blocks away
-              await this.bot.pathfinder.goto(new goals.GoalNear(
-                block.position.x + 3,
-                block.position.y,
-                block.position.z,
-                1
-              ));
-              await this.sleep(500);
-              // Move back
-              await this.bot.pathfinder.goto(new goals.GoalNear(
-                block.position.x,
-                block.position.y,
-                block.position.z,
-                3
-              ));
-              await this.sleep(500);
-            } catch {
-              // Ignore movement errors during retry
-            }
-          }
-        } else {
-          throw new Error(`Failed to open container after ${maxRetries} attempts: ${errorMsg}`);
-        }
-      }
-    }
-    
-    throw new Error('Failed to open container: unexpected state');
+    const container = await this.bot.openContainer(block);
+    await this.sleep(100);
+
+    return container;
   }
 
   private async openAndReadChest(x: number, y: number, z: number): Promise<any[]> {
     if (!this.bot) throw new Error('Bot not connected');
 
-    // Get block with chunk loading wait - this handles cases where chunks are unloaded
-    const block = await this.getBlockWithChunkWait(x, y, z);
-
+    const block = await this.getBlock(x, y, z);
     await this.moveToBlock(x, y, z);
-    await this.sleep(150);
+    await this.sleep(100);
 
-    // Use safe container opening with lookAt and retries
     const chest = await this.safeOpenContainer(block);
 
     const items = chest.containerItems().map((item: any) => {
@@ -628,6 +505,9 @@ export class StorageBotInstance extends BaseBotInstance {
         default:
           throw new Error(`Unknown delivery method: ${task.deliveryMethod}`);
       }
+
+      // Return to home after successful delivery
+      await this.returnToHomeIfEnabled(task.storageSystemId);
     } finally {
       this.currentTaskId = null;
       this.taskCancelled = false;
@@ -852,11 +732,9 @@ export class StorageBotInstance extends BaseBotInstance {
       await this.updateTaskStep(task.id, `Opening chest at ${chestPlan.x}, ${chestPlan.y}, ${chestPlan.z}...`);
 
       try {
-        // Get block with chunk loading wait - handles cases where chunks are unloaded after player disconnect
-        const block = await this.getBlockWithChunkWait(chestPlan.x, chestPlan.y, chestPlan.z);
-
+        const block = await this.getBlock(chestPlan.x, chestPlan.y, chestPlan.z);
         await this.moveToBlock(chestPlan.x, chestPlan.y, chestPlan.z);
-        await this.sleep(150);
+        await this.sleep(100);
 
         const chest = await this.safeOpenContainer(block);
 
@@ -1250,10 +1128,9 @@ export class StorageBotInstance extends BaseBotInstance {
       const shulkerItem = shulkerItems[shulkerIndex];
       await this.updateTaskStep(task.id, `Getting shulker ${shulkerIndex + 1}/${shulkerItems.length}...`);
 
-      // Get block with chunk loading wait - handles cases where chunks are unloaded after player disconnect
       let chestBlock;
       try {
-        chestBlock = await this.getBlockWithChunkWait(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
+        chestBlock = await this.getBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
       } catch (e) {
         console.warn(`[Bot ${this.id}] Could not access chest at ${shulkerItem.chest.x}, ${shulkerItem.chest.y}, ${shulkerItem.chest.z}:`, e);
         shulkerIndex++;
@@ -1261,7 +1138,7 @@ export class StorageBotInstance extends BaseBotInstance {
       }
 
       await this.moveToBlock(shulkerItem.chest.x, shulkerItem.chest.y, shulkerItem.chest.z);
-      await this.sleep(150);
+      await this.sleep(100);
 
       const chest = await this.safeOpenContainer(chestBlock);
 
