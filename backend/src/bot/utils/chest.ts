@@ -115,6 +115,11 @@ export async function findNearbyEmptyChest(
 
     let chest: any = null;
     try {
+      // Look at the block center before opening - crucial for Minecraft interaction
+      const blockCenter = block.position.offset(0.5, 0.5, 0.5);
+      await bot.lookAt(blockCenter, true);
+      await bot.waitForTicks(2);
+      
       chest = await bot.openContainer(block);
       const isEmpty = chest.containerItems().length === 0;
 

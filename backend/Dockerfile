@@ -29,6 +29,9 @@ RUN chmod +x /docker-entrypoint.sh
 # Create non-root user for improved security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
+# Create auth_cache directory with proper permissions
+RUN mkdir -p /app/auth_cache && chown -R appuser:appgroup /app/auth_cache
+
 # Change ownership of app directory
 RUN chown -R appuser:appgroup /app
 
