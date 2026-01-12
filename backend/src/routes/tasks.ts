@@ -45,14 +45,18 @@ const itemDecisionSchema = z.object({
 // List all tasks for a bot
 router.get('/bot/:botId', async (req: AuthRequest, res) => {
   try {
-    const bot = await prisma.bot.findFirst({
-      where: {
-        id: req.params.botId,
-        userId: req.userId,
-      },
+    const bot = await prisma.bot.findUnique({
+      where: { id: req.params.botId },
     });
 
     if (!bot) {
+      res.status(404).json({ error: 'Bot not found' });
+      return;
+    }
+
+    // Allow access if owner or if bot is public
+    const isOwner = bot.userId === req.userId;
+    if (!isOwner && !bot.isPublic) {
       res.status(404).json({ error: 'Bot not found' });
       return;
     }
@@ -89,15 +93,18 @@ router.get('/:id', async (req: AuthRequest, res) => {
       return;
     }
 
-    // Verify ownership via bot
-    const bot = await prisma.bot.findFirst({
-      where: {
-        id: task.botId,
-        userId: req.userId,
-      },
+    // Verify access via bot (owner or public)
+    const bot = await prisma.bot.findUnique({
+      where: { id: task.botId },
     });
 
     if (!bot) {
+      res.status(404).json({ error: 'Task not found' });
+      return;
+    }
+
+    const isOwner = bot.userId === req.userId;
+    if (!isOwner && !bot.isPublic) {
       res.status(404).json({ error: 'Task not found' });
       return;
     }

@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { SectionCards } from "@/components/section-cards";
 import { NewBotDialog } from "@/components/new-bot-dialog";
 import { SetupBotDialog } from "@/components/setup-bot-dialog";
+import { EditStorageDialog } from "@/components/edit-storage-dialog";
 import { ItemIcon } from "@/components/item-icon";
 import { StorageStats, StorageStatsSkeleton } from "@/components/storage-stats";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
@@ -131,6 +132,7 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
   const [indexingStatus, setIndexingStatus] = useState<string>("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [editStorageDialogOpen, setEditStorageDialogOpen] = useState(false);
   const [expandedShulkerIds, setExpandedShulkerIds] = useState<Set<string>>(new Set());
   const [allShulkersExpanded, setAllShulkersExpanded] = useState(false);
   // Selection key format: "itemId" for regular items, "shulker:shulkerContentId" for shulker contents
@@ -581,8 +583,15 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => setSetupDialogOpen(true)}>
                     <Edit className="mr-2 h-4 w-4" />
-                    Edit Settings
+                    Setup Wizard
                   </DropdownMenuItem>
+                  {/* Storage-specific settings - only show for storage bots */}
+                  {bot.botType === 'storage' && currentStorage && (
+                    <DropdownMenuItem onSelect={() => setEditStorageDialogOpen(true)}>
+                      <MapPin className="mr-2 h-4 w-4" />
+                      Edit Storage Location
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     onSelect={() => {
                       setVisibility.mutate(
@@ -657,6 +666,19 @@ function BotCard({ bot, isOwner = true }: { bot: any; isOwner?: boolean }) {
             botName={bot.name}
             open={setupDialogOpen}
             onOpenChange={setSetupDialogOpen}
+          />
+        )}
+
+        {/* Edit Storage Dialog - only for storage bot owners */}
+        {isOwner && bot.botType === 'storage' && currentStorage && (
+          <EditStorageDialog
+            storage={currentStorage}
+            open={editStorageDialogOpen}
+            onOpenChange={setEditStorageDialogOpen}
+            onSave={async (id, data) => {
+              await updateStorage.mutateAsync({ id, data });
+            }}
+            isPending={updateStorage.isPending}
           />
         )}
 
